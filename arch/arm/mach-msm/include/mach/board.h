@@ -558,6 +558,13 @@ struct isp1763_platform_data {
 #endif
 /* common init routines for use by arch/arm/mach-msm/board-*.c */
 
+#ifdef CONFIG_MACH_HTC
+#define SHIP_BUILD	0
+#define MFG_BUILD	1
+#define ENG_BUILD	2
+int board_mfg_mode(void);
+#endif
+
 #ifdef CONFIG_OF_DEVICE
 void msm_8974_init(struct of_dev_auxdata **);
 #endif
@@ -594,10 +601,49 @@ struct msm_usb_host_platform_data;
 int msm_add_host(unsigned int host,
 		struct msm_usb_host_platform_data *plat);
 #if defined(CONFIG_USB_FUNCTION_MSM_HSUSB) \
-	|| defined(CONFIG_USB_MSM_72K) || defined(CONFIG_USB_MSM_72K_MODULE)
+  || defined(CONFIG_USB_MSM_72K) || defined(CONFIG_USB_MSM_72K_MODULE) || (defined(CONFIG_USB_CI13XXX_MSM) && defined(CONFIG_MACH_HTC))
 void msm_hsusb_set_vbus_state(int online);
+void msm_otg_set_vbus_state(int online);
+enum usb_connect_type {
+	CONNECT_TYPE_CLEAR = -2,
+	CONNECT_TYPE_UNKNOWN = -1,
+	CONNECT_TYPE_NONE = 0,
+	CONNECT_TYPE_USB,
+	CONNECT_TYPE_AC,
+	CONNECT_TYPE_9V_AC,
+	CONNECT_TYPE_WIRELESS,
+	CONNECT_TYPE_INTERNAL,
+	CONNECT_TYPE_UNSUPPORTED,
+#ifdef CONFIG_MACH_VERDI_LTE
+	/* Y cable with USB and 9V charger */
+	CONNECT_TYPE_USB_9V_AC,
+#endif
+	CONNECT_TYPE_MHL_AC,
+};
 #else
 static inline void msm_hsusb_set_vbus_state(int online) {}
+#endif
+#ifdef CONFIG_MACH_HTC
+/* START: add USB connected notify function */
+struct t_usb_status_notifier{
+	struct list_head notifier_link;
+	const char *name;
+	void (*func)(int cable_type);
+};
+int htc_usb_register_notifier(struct t_usb_status_notifier *notifer);
+int usb_get_connect_type(void);
+static LIST_HEAD(g_lh_usb_notifier_list);
+
+/***********************************
+Direction: cable detect drvier -> battery driver or other
+***********************************/
+struct t_cable_status_notifier{
+	struct list_head cable_notifier_link;
+	const char *name;
+	void (*func)(int cable_type);
+};
+int cable_detect_register_notifier(struct t_cable_status_notifier *);
+static LIST_HEAD(g_lh_cable_detect_notifier_list);
 #endif
 
 void msm_snddev_init(void);
