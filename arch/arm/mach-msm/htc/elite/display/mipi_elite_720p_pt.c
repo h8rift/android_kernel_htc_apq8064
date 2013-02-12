@@ -57,7 +57,7 @@ static struct mipi_dsi_phy_ctrl phy_ctrl_720p_id311100 = {
 
 static struct msm_panel_info pinfo;
 
-static int mipi_video_sony_hd720p_init(void)
+static int __init mipi_video_sony_hd720p_init(void)
 {
   int ret;
 
@@ -320,7 +320,7 @@ static int __init mipi_video_sharp_nt_720p_pt_init(void)
   return ret;
 }
 
-static int mipi_elite_panel_init(void)
+static int __init mipi_elite_panel_init(void)
 {
   int rc;
 
