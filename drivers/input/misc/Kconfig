@@ -654,4 +654,27 @@ config STM_LIS3DH
           If you say yes here you get support for STMicroelectronics's
           acceleration sensors LIS3DH.
 
+config SENSORS_AKM8975_PANA_GYRO
+        tristate "AKM8973 Compass Driver for Pana Gyro"
+        depends on I2C
+        help
+         AKM8975 Compass Driver implemented by HTC.
+
+config SENSORS_PANASONIC_GYRO
+	tristate "PANASONIC GYRO sensor support"
+	depends on I2C=y
+	help
+
+config SENSORS_BMA250
+	tristate "BMA250 acceleration sensor support"
+	depends on I2C=y
+	help
+	  BMA250 G-sensor Driver implemented by HTC.
+
+config INPUT_CAPELLA_CM3629
+	tristate "CM3629 proximity and light sensor"
+	help
+	  Say Y here to enable the CM3629 Short Distance Proximity
+	  Sensor with Ambient Light Sensor.
+
 endif
