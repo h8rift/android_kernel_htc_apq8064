@@ -563,6 +563,7 @@ struct isp1763_platform_data {
 #define MFG_BUILD	1
 #define ENG_BUILD	2
 int board_mfg_mode(void);
+int board_build_flag(void);
 #endif
 
 #ifdef CONFIG_OF_DEVICE
