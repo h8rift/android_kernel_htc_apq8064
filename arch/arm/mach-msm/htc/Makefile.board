@@ -4,3 +4,6 @@
 
 # VILLE
 obj-$(CONFIG_MACH_VILLE) += ville/
+# ELITE/EVITA
+obj-$(CONFIG_MACH_ELITE) += elite/
+
