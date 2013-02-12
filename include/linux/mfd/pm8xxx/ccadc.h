@@ -72,6 +72,16 @@ void pm8xxx_calib_ccadc(void);
  *
  */
 int pm8xxx_ccadc_get_battery_current(int *bat_current);
+#ifdef CONFIG_MACH_HTC
+/**
+ * pm8xxx_ccadc_dump_all - function to dump regs
+ */
+int pm8xxx_ccadc_dump_all(void);
+/**
+ * pm8xxx_ccadc_get_attr_text - function to get regs
+ */
+int pm8xxx_ccadc_get_attr_text(char *buf, int size);
+#endif
 #else
 static inline s64 pm8xxx_cc_adjust_for_gain(s64 uv)
 {
@@ -84,6 +94,16 @@ static inline int pm8xxx_ccadc_get_battery_current(int *bat_current)
 {
 	return -ENXIO;
 }
+#ifdef CONFIG_MACH_HTC
+static inline int pm8xxx_ccadc_dump_all(void)
+{
+	return -ENXIO;
+}
+static inline int pm8xxx_ccadc_get_attr_text(char *buf, int size)
+{
+	return 0;
+}
+#endif
 #endif
 
 #endif /* __PMIC8XXX_CCADC_H__ */
