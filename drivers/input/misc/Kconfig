@@ -665,6 +665,19 @@ config SENSORS_PANASONIC_GYRO
 	depends on I2C=y
 	help
 
+config SENSORS_R3GD20
+	tristate "ST R3GD20 3-axis gyroscope"
+	depends on I2C=y
+	default n
+	help
+          This driver provides support for the R3Gd20 chip which is a
+          3-axis gyroscope.
+
+          This driver can also be built as modules.  If so, the module for
+          accelerometer will be called r3gd20.
+
+          Say Y here if you have a device containing r3gd20 chip.
+
 config SENSORS_BMA250
 	tristate "BMA250 acceleration sensor support"
 	depends on I2C=y
