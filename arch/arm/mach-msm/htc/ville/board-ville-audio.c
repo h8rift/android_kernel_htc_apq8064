@@ -1653,26 +1653,22 @@ static int __init msm_ville_audio_init(void)
 {
 	int ret;
 
-        printk(KERN_ERR "%s: ++\n", __func__);
 	if (!soc_class_is_msm8960()) {
 		pr_debug("%s: Not the right machine type\n", __func__);
 		return -ENODEV ;
 	}        
-        printk(KERN_ERR "%s: ++1\n", __func__);
 
 	mbhc_cfg.calibration = def_tabla_mbhc_cal();
 	if (!mbhc_cfg.calibration) {
 		pr_err("Calibration data allocation failed\n");
 		return -ENOMEM;
 	}
-        printk(KERN_ERR "%s: ++2\n", __func__);
 	msm_snd_device = platform_device_alloc("soc-audio", 0);
 	if (!msm_snd_device) {
 		pr_err("Platform device allocation failed\n");
 		kfree(mbhc_cfg.calibration);
 		return -ENOMEM;
 	}
-        printk(KERN_ERR "%s: ++3\n", __func__);
 	platform_set_drvdata(msm_snd_device, &snd_soc_card_msm8960);
 	ret = platform_device_add(msm_snd_device);
 	if (ret) {
@@ -1680,7 +1676,6 @@ static int __init msm_ville_audio_init(void)
 		kfree(mbhc_cfg.calibration);
 		return ret;
 	}
-        printk(KERN_ERR "%s: ++4\n", __func__);
 
 	if (cpu_is_msm8960()) {
 		if (msm_configure_headset_mic_gpios()) {
@@ -1694,7 +1689,6 @@ static int __init msm_ville_audio_init(void)
 		pr_debug("%s headset GPIO 23 and 35 not configured msm960ab",
 								__func__);
 	}
-        printk(KERN_ERR "%s: ++7 %d\n", __func__, ret);
 	mutex_init(&cdc_mclk_mutex);
 	atomic_set(&auxpcm_rsc_ref, 0);
 	return ret;
