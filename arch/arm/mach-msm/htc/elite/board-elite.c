@@ -3142,11 +3142,6 @@ static struct platform_device *elite_devices[] __initdata = {
 	&msm_cpudai_auxpcm_tx,
 	&msm_cpu_fe,
 	&msm_stub_codec,
-	&msm_kgsl_3d0,
-#ifdef CONFIG_MSM_KGSL_2D
-	&msm_kgsl_2d0,
-	&msm_kgsl_2d1,
-#endif
 #ifdef CONFIG_MSM_GEMINI
 	&msm8960_gemini_device,
 #endif
