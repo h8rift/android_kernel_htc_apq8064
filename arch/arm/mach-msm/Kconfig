@@ -915,6 +915,8 @@ endmenu
 
 source "arch/arm/mach-msm/lge/Kconfig"
 
+source "arch/arm/mach-msm/htc/Kconfig"
+
 config MSM_STACKED_MEMORY
 	bool "Stacked Memory"
 	default y
@@ -927,7 +929,8 @@ config PHYS_OFFSET
 	hex
 	default "0x40800000" if ARCH_MSM9615
 	default "0x80200000" if ARCH_APQ8064
-	default "0x80200000" if ARCH_MSM8960
+	default "0x80400000" if ARCH_MSM8960 && MACH_HTC
+	default "0x80200000" if ARCH_MSM8960 && !MACH_HTC
 	default "0x80200000" if ARCH_MSM8930
 	default "0x00000000" if ARCH_MSM8974
 	default "0x00000000" if ARCH_MPQ8092
@@ -1207,23 +1210,10 @@ config CPU_HAS_L2_PMU
 	help
 	 Select this if the L2 cache controller has a Performance Monitoring Unit.
 
-config HTC_HEADSET
-	tristate "HTC 2 Wire detection driver"
-	default n
-	help
-	 Provides support for detecting HTC 2 wire devices, such as wired
-	 headset, on the trout platform. Can be used with the msm serial
-	 debugger, but not with serial console.
-
 config TROUT_BATTCHG
 	depends on MACH_TROUT && POWER_SUPPLY
 	default y
 	bool "Trout battery / charger driver"
-
-config HTC_PWRSINK
-	depends on MSM_SMD
-	default n
-	bool "HTC Power Sink Driver"
 
 config QSD_SVS
 	bool "QSD Static Voltage Scaling"

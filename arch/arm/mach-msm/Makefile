@@ -303,6 +303,7 @@ obj-$(CONFIG_MACH_SAPPHIRE) += board-sapphire-mmc.o board-sapphire-wifi.o
 obj-$(CONFIG_MACH_SAPPHIRE) += board-sapphire-rfkill.o msm_vibrator.o
 
 obj-$(CONFIG_MACH_LGE) += lge/
+obj-$(CONFIG_MACH_HTC) += htc/
 
 CFLAGS_msm_vibrator.o += -Idrivers/staging/android
 CFLAGS_board-9615.o += -Idrivers/usb/gadget
@@ -311,8 +312,6 @@ obj-$(CONFIG_ARCH_FSM9XXX) += board-fsm9xxx.o
 
 obj-$(CONFIG_TROUT_BATTCHG) += htc_battery.o
 
-obj-$(CONFIG_HTC_PWRSINK) += htc_pwrsink.o
-obj-$(CONFIG_HTC_HEADSET) += htc_headset.o
 obj-$(CONFIG_MSM_RMT_STORAGE_CLIENT) += rmt_storage_client.o
 obj-$(CONFIG_MSM_SDIO_SMEM) += sdio_smem.o
 obj-$(CONFIG_MSM_RPM) += rpm.o
@@ -362,7 +361,11 @@ obj-$(CONFIG_MSM_SHOW_RESUME_IRQ) += msm_show_resume_irq.o
 obj-$(CONFIG_BT_MSM_PINTEST)  += btpintest.o
 obj-$(CONFIG_MSM_FAKE_BATTERY) += fish_battery.o
 obj-$(CONFIG_MSM_RPC_VIBRATOR) += msm_vibrator.o
-obj-$(CONFIG_MSM_NATIVE_RESTART) += restart.o
+ifdef CONFIG_ARCH_APQ8064
+	obj-$(CONFIG_MSM_NATIVE_RESTART) += restart-apq8064.o
+else
+	obj-$(CONFIG_MSM_NATIVE_RESTART) += restart.o
+endif
 obj-$(CONFIG_MSM_MODEM_RESTART) += restart_7k.o
 
 obj-$(CONFIG_MSM_PROC_COMM_REGULATOR) += proccomm-regulator.o
