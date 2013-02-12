@@ -394,6 +394,12 @@ config SENSORS_AK8975
 	  If you say yes here you get support for Asahi Kasei's
 	  orientation sensor AK8975.
 
+config SENSORS_NFC_PN544
+	tristate "PN544 NFC sensor support"
+	depends on I2C=y
+	help
+	  PN544 NFC Driver implemented.
+
 config EP93XX_PWM
 	tristate "EP93xx PWM support"
 	depends on ARCH_EP93XX
@@ -603,6 +609,13 @@ config PMIC8XXX_VIBRATOR
 	  on the PM8XXX chips. The vibrator is controlled using the
 	  timed output class.
 
+config PMIC8XXX_VIBRATOR_PWM
+        tristate "Qualcomm Vibrator support for PMIC8XXX with pwm function"
+        help
+          This option enables device driver support for the vibrator
+          on the PM8XXX chips. The vibrator is controlled using the
+          timed output class.
+
 config ANDROID_VIBRATOR
 	bool "Android vibrator support"
 	depends on ANDROID_TIMED_OUTPUT
@@ -667,6 +680,27 @@ config USB_HSIC_SMSC_HUB
 	  This adds support for connecting devices like mouse in HSIC
 	  Host mode.
 
+config CABLE_DETECT_8XXX
+        boolean "Cable detect driver"
+        default n
+        help
+          Detect usb, ac and other accessories.
+
+config CABLE_DETECT_ACCESSORY
+	boolean "CABLE ACCESSORY DETECT"
+	default n
+
+config CABLE_DETECT_ACCESSORY_BY_ADC
+	boolean "DETECT ACCESSORY BY PMIC ADC"
+	default n
+
+config VP_A1028
+	tristate "A1028 Voice Processor Driver"
+	depends on I2C=y
+	default n
+	help
+	 A1028 Voice Processor Driver implemented by HTC.
+
 config BU52031NVX
 	tristate "Cradle BU52031NVX support"
 	depends on MFD_PM8XXX
@@ -688,6 +722,7 @@ source "drivers/misc/iwmc3200top/Kconfig"
 source "drivers/misc/ti-st/Kconfig"
 source "drivers/misc/lis3lv02d/Kconfig"
 source "drivers/misc/carma/Kconfig"
+source "drivers/misc/mpu3050/Kconfig"
 source "drivers/misc/altera-stapl/Kconfig"
 source "drivers/misc/slimport_anx7808/Kconfig"
 
