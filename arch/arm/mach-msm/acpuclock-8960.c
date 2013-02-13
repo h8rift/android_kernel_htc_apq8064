@@ -21,12 +21,6 @@
 #include "acpuclock.h"
 #include "acpuclock-krait.h"
 
-#ifdef CONFIG_MACH_HTC
-/* CP15 L2 indirect addresses. */
-#define L2CPMR_IADDR		0x500
-#define L2CPUCPMR_IADDR		0x501
-#endif
-
 static struct hfpll_data hfpll_data __initdata = {
 	.mode_offset = 0x00,
 	.l_offset = 0x08,
@@ -51,11 +45,7 @@ static struct scalable scalable[] __initdata = {
 		.aux_clk_sel_phys = 0x02088014,
 		.aux_clk_sel = 3,
 		.sec_clk_sel = 2,
-#ifdef CONFIG_MACH_HTC
-		.l2cpmr_iaddr = L2CPUCPMR_IADDR,
-#else
-                .l2cpmr_iaddr = 0x4501,
-#endif
+		.l2cpmr_iaddr = 0x4501,
 		.vreg[VREG_CORE] = { "krait0", 1300000 },
 		.vreg[VREG_MEM]  = { "krait0_mem", 1150000 },
 		.vreg[VREG_DIG]  = { "krait0_dig", 1150000 },
@@ -67,11 +57,7 @@ static struct scalable scalable[] __initdata = {
 		.aux_clk_sel_phys = 0x02098014,
 		.aux_clk_sel = 3,
 		.sec_clk_sel = 2,
-#ifdef CONFIG_MACH_HTC
-		.l2cpmr_iaddr = L2CPUCPMR_IADDR,
-#else
-                .l2cpmr_iaddr = 0x5501,
-#endif
+		.l2cpmr_iaddr = 0x5501,
 		.vreg[VREG_CORE] = { "krait1", 1300000 },
 		.vreg[VREG_MEM]  = { "krait1_mem", 1150000 },
 		.vreg[VREG_DIG]  = { "krait1_dig", 1150000 },
@@ -83,11 +69,7 @@ static struct scalable scalable[] __initdata = {
 		.aux_clk_sel_phys = 0x02011028,
 		.aux_clk_sel = 3,
 		.sec_clk_sel = 2,
-#ifdef CONFIG_MACH_HTC
-                .l2cpmr_iaddr = L2CPMR_IADDR,
-#else
-                .l2cpmr_iaddr = 0x0500,
-#endif
+		.l2cpmr_iaddr = 0x0500,
 		.vreg[VREG_HFPLL_A] = { "l2_s8", 2050000 },
 		.vreg[VREG_HFPLL_B] = { "l2_l23", 1800000 },
 	},
