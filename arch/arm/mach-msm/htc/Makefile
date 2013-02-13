@@ -3,7 +3,8 @@ subdir-ccflags-$(CONFIG_ARCH_MSM) += -Iarch/arm/mach-msm
 -include $(src)/Makefile.board
 
 obj-$(CONFIG_MACH_HTC) += devices_htc.o  \
-			htc_bdaddress.o
+			htc_bdaddress.o \
+			radio_feedback.o
 
 obj-$(CONFIG_MSM_NATIVE_RESTART) += htc_restart_handler.o
 
