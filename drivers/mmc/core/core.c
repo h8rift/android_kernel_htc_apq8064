@@ -516,10 +516,25 @@ static void mmc_wait_for_req_done(struct mmc_host *host,
 				  struct mmc_request *mrq)
 {
 	struct mmc_command *cmd;
+#if defined CONFIG_MACH_HTC
+	unsigned long timeout = 0;
+#endif
 
 	while (1) {
+#if defined CONFIG_MACH_HTC
+	if (host->index == 1) {
+		timeout = wait_for_completion_timeout(&mrq->completion, msecs_to_jiffies(2000));
+		if (!timeout) {
+			printk("%s: wait for completion timeout!!\n",
+					mmc_hostname(host));
+			mrq->cmd->error = -ETIMEDOUT;
+		}
+	}
+	else
 		wait_for_completion_io(&mrq->completion);
-
+#else
+		wait_for_completion_io(&mrq->completion);
+#endif
 		cmd = mrq->cmd;
 
 		/*
