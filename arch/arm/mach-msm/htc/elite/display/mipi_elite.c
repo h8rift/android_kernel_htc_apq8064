@@ -8,8 +8,10 @@
 #include "mipi_elite.h"
 
 
+#ifndef ELITE_USE_CMDLISTS
 static struct dsi_buf elite_tx_buf;
 static struct dsi_buf elite_rx_buf;
+#endif
 static struct msm_panel_common_pdata *mipi_elite_pdata;
 static int mipi_elite_lcd_init(void);
 static struct dcs_cmd_req cmdreq;
@@ -1427,11 +1429,10 @@ static struct dsi_cmd_desc *cabc_cmds = cabc_off; /* default disable cabc */
 
 #endif
 
-//#define USE_CMDLISTS 1
 static int elite_send_display_cmds(struct dsi_cmd_desc *cmd, int cnt)
 {
   int ret = 0;
-#ifdef USE_CMDLISTS
+#ifdef ELITE_USE_CMDLISTS
   struct dcs_cmd_req cmdreq;
 
   cmdreq.cmds = cmd;
@@ -1749,8 +1750,10 @@ int mipi_elite_device_register(struct msm_panel_info *pinfo,
 static int mipi_elite_lcd_init(void)
 {
   printk(KERN_ERR  "[DISP] %s +++\n", __func__);
+#ifndef ELITE_USE_CMDLISTS
   mipi_dsi_buf_alloc(&elite_tx_buf, DSI_BUF_SIZE);
   mipi_dsi_buf_alloc(&elite_rx_buf, DSI_BUF_SIZE);
+#endif
 
   printk(KERN_ERR  "[DISP] %s ---\n", __func__);
   return platform_driver_register(&this_driver);

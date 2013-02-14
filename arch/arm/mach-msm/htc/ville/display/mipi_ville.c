@@ -3,8 +3,10 @@
 #include "../../../drivers/video/msm/mipi_dsi.h"
 #include "mipi_ville.h"
 
+#ifndef VILLE_USE_CMDLISTS
 static struct dsi_buf ville_tx_buf;
 static struct dsi_buf ville_rx_buf;
+#endif
 static struct mipi_dsi_panel_platform_data *mipi_ville_pdata;
 static struct dsi_cmd_desc *display_on_cmds = NULL;
 static struct dsi_cmd_desc *display_off_cmds = NULL;
@@ -332,11 +334,10 @@ static struct gamma_curvy smd_gamma_tbl = {
 #endif
 
 extern int ville_panel_first_init;
-//#define USE_CMDLISTS 1
 static int ville_send_display_cmds(struct dsi_cmd_desc *cmd, int cnt)
 {
   int ret = 0;
-#ifdef USE_CMDLISTS
+#ifdef VILLE_USE_CMDLISTS
   struct dcs_cmd_req cmdreq;
 
   cmdreq.cmds = cmd;
@@ -639,9 +640,11 @@ err_device_put:
 static int mipi_ville_lcd_init(void)
 {
   printk(KERN_ERR  "[DISP] %s +++\n", __func__);
+#ifndef VILLE_USE_CMDLISTS
   mipi_dsi_buf_alloc(&ville_tx_buf, DSI_BUF_SIZE);
   mipi_dsi_buf_alloc(&ville_rx_buf, DSI_BUF_SIZE);
-  
+#endif
+
   printk(KERN_ERR  "[DISP] %s ---\n", __func__);
   return platform_driver_register(&this_driver);
 }

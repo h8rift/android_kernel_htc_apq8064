@@ -7,6 +7,7 @@
 int mipi_elite_device_register(struct msm_panel_info *pinfo,
                                  u32 channel, u32 panel);
 
+#define ELITE_USE_CMDLISTS 1
 #define PWM_MIN                   6
 #define PWM_DEFAULT               91
 #define PWM_MAX                   255

@@ -6,9 +6,10 @@
 #include "../board-jet.h"
 #include "mipi_jet.h"
 
-
+#ifndef JET_USE_CMDLISTS
 static struct dsi_buf jet_tx_buf;
 static struct dsi_buf jet_rx_buf;
+#endif
 static struct msm_panel_common_pdata *mipi_jet_pdata;
 static int mipi_jet_lcd_init(void);
 static int mipi_lcd_on = 1;
@@ -3055,11 +3056,10 @@ static struct dsi_cmd_desc auo_panel_video_mode_cmds_c3_1[] = {
 	{DTYPE_DCS_WRITE1, 1, 0, 0, 0, 2, (char[]){0x53, 0x24}},
 };
 
-//#define USE_CMDLISTS 1
 static int jet_send_display_cmds(struct dsi_cmd_desc *cmd, int cnt)
 {
   int ret = 0;
-#ifdef USE_CMDLISTS
+#ifdef JET_USE_CMDLISTS
   struct dcs_cmd_req cmdreq;
 
   cmdreq.cmds = cmd;
@@ -3171,8 +3171,6 @@ static int mipi_jet_lcd_on(struct platform_device *pdev)
 
   mipi  = &mfd->panel_info.mipi;
 
-  jet_send_display_cmds(jet_display_on_cmds, jet_display_on_cmds_count);
-
   if (!mipi_lcd_on)
     {
       jet_send_display_cmds(nvt_LowTemp_wrkr_enter,
@@ -3201,6 +3199,7 @@ static int mipi_jet_lcd_on(struct platform_device *pdev)
               jet_send_display_cmds(jet_command_on_cmds, jet_command_on_cmds_count);
               printk(KERN_INFO "%s: panel_type command mode (%d)", __func__, panel_type);
             }
+          jet_send_display_cmds(jet_display_on_cmds, jet_display_on_cmds_count);
         }
       else
         printk(KERN_INFO "%s: panel_type not supported!(%d)", __func__, panel_type);
@@ -3378,8 +3377,10 @@ int mipi_jet_device_register(struct msm_panel_info *pinfo,
 static int mipi_jet_lcd_init(void)
 {
   printk(KERN_ERR  "[DISP] %s +++\n", __func__);
+#ifndef JET_USE_CMDLISTS
   mipi_dsi_buf_alloc(&jet_tx_buf, DSI_BUF_SIZE);
   mipi_dsi_buf_alloc(&jet_rx_buf, DSI_BUF_SIZE);
+#endif
 
   printk(KERN_ERR  "[DISP] %s ---\n", __func__);
   return platform_driver_register(&this_driver);
