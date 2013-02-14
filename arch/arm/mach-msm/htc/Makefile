@@ -6,7 +6,8 @@ obj-$(CONFIG_MACH_HTC) += devices_htc.o  \
 			htc_bdaddress.o \
 			emmc_partitions.o \
 			radio_feedback.o \
-			htc_sysinfo.o
+			htc_sysinfo.o \
+			htc_port_list.o
 
 obj-$(CONFIG_MSM_NATIVE_RESTART) += htc_restart_handler.o
 
