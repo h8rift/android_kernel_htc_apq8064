@@ -24,33 +24,41 @@
 #include "../board-jet.h"
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
-#define MSM_FB_PRIM_BUF_SIZE (1280 * 736 * 4 * 3) /* 4 bpp x 3 pages */
+#define MSM_FB_PRIM_BUF_SIZE \
+		(roundup((roundup(1280, 32) * roundup(720, 32) * 4), 4096) * 3)
+			
 #else
-#define MSM_FB_PRIM_BUF_SIZE (1280 * 736 * 4 * 2) /* 4 bpp x 2 pages */
+#define MSM_FB_PRIM_BUF_SIZE \
+		(roundup((roundup(1280, 32) * roundup(720, 32) * 4), 4096) * 2)
+			
 #endif
 
-#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
-#define MSM_FB_EXT_BUF_SIZE (1920 * 1088 * 2 * 1) /* 2 bpp x 1 page */
-#elif defined(CONFIG_FB_MSM_TVOUT)
-#define MSM_FB_EXT_BUF_SIZE (720 * 576 * 2 * 2) /* 2 bpp x 2 pages */
-#else
-#define MSM_FB_EXT_BUF_SIZE 0
-#endif
-
-/* Note: must be multiple of 4096 */
-#define MSM_FB_SIZE roundup(MSM_FB_PRIM_BUF_SIZE + MSM_FB_EXT_BUF_SIZE, 4096)
+#define MSM_FB_SIZE roundup(MSM_FB_PRIM_BUF_SIZE, 4096)
 
 #ifdef CONFIG_FB_MSM_OVERLAY0_WRITEBACK
-#define MSM_FB_OVERLAY0_WRITEBACK_SIZE roundup((1280 * 736 * 3 * 2), 4096)
+#define MSM_FB_OVERLAY0_WRITEBACK_SIZE \
+		roundup((roundup(1280, 32) * roundup(720, 32) * 3 * 2), 4096)
 #else
 #define MSM_FB_OVERLAY0_WRITEBACK_SIZE (0)
-#endif  /* CONFIG_FB_MSM_OVERLAY0_WRITEBACK */
+#endif  
 
 #ifdef CONFIG_FB_MSM_OVERLAY1_WRITEBACK
-#define MSM_FB_OVERLAY1_WRITEBACK_SIZE roundup((1920 * 1088 * 3 * 2), 4096)
+#define MSM_FB_OVERLAY1_WRITEBACK_SIZE \
+		roundup((roundup(1920, 32) * roundup(1080, 32) * 3 * 2), 4096)
 #else
 #define MSM_FB_OVERLAY1_WRITEBACK_SIZE (0)
-#endif  /* CONFIG_FB_MSM_OVERLAY1_WRITEBACK */
+#endif
+
+#ifdef CONFIG_FB_MSM_HDMI_AS_PRIMARY
+static unsigned char hdmi_is_primary = 1;
+#else
+static unsigned char hdmi_is_primary;
+#endif
+
+unsigned char msm8960_hdmi_as_primary_selected(void)
+{
+	return hdmi_is_primary;
+}
 
 static struct resource msm_fb_resources[] = {
 	{
@@ -383,11 +391,6 @@ void __init msm8960_mdp_writeback(struct memtype_reserve* reserve_table)
 #endif
 }
 
-static char wfd_check_mdp_iommu_split_domain(void)
-{
-	return mdp_pdata.mdp_iommu_split_domain;
-}
-
 #ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
 static struct resource hdmi_msm_resources[] = {
 	{
@@ -412,15 +415,13 @@ static struct resource hdmi_msm_resources[] = {
 
 static int hdmi_enable_5v(int on);
 static int hdmi_core_power(int on, int show);
-extern void hdmi_hpd_feature(int enable);
-/*static int hdmi_cec_power(int on);*/
-
+static int hdmi_cec_power(int on);
 
 static struct msm_hdmi_platform_data hdmi_msm_data = {
 	.irq = HDMI_IRQ,
 	.enable_5v = hdmi_enable_5v,
 	.core_power = hdmi_core_power,
-	/*.cec_power = hdmi_cec_power,*/
+	.cec_power = hdmi_cec_power,
 };
 
 static struct platform_device hdmi_msm_device = {
@@ -430,46 +431,74 @@ static struct platform_device hdmi_msm_device = {
 	.resource = hdmi_msm_resources,
 	.dev.platform_data = &hdmi_msm_data,
 };
+#endif 
 
+#ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
+static struct platform_device wfd_panel_device = {
+	.name = "wfd_panel",
+	.id = 0,
+	.dev.platform_data = NULL,
+};
+
+static struct platform_device wfd_device = {
+	.name          = "msm_wfd",
+	.id            = -1,
+};
+#endif
+
+#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
 static int hdmi_enable_5v(int on)
 {
+	
+	static struct regulator *reg_8921_hdmi_mvs;	
 	static int prev_on;
 	int rc;
 
 	if (on == prev_on)
 		return 0;
 
-	if (on) {
-		rc = gpio_request(JET_GPIO_V_BOOST_5V_EN, "HDMI_BOOST_5V");
-		if (rc) {
-			pr_err("'%s'(%d) gpio_request failed, rc=%d\n",
-				"HDMI_BOOST_5V", JET_GPIO_V_BOOST_5V_EN, rc);
-			goto error;
+	if (!reg_8921_hdmi_mvs) {
+		reg_8921_hdmi_mvs = regulator_get(&hdmi_msm_device.dev,
+					"hdmi_mvs");
+		if (IS_ERR(reg_8921_hdmi_mvs)) {
+			pr_err("'%s' regulator not found, rc=%ld\n",
+				"hdmi_mvs", IS_ERR(reg_8921_hdmi_mvs));
+			reg_8921_hdmi_mvs = NULL;
+			return -ENODEV;
 		}
-		gpio_set_value(JET_GPIO_V_BOOST_5V_EN, 1);
-		pr_info("%s(on): success\n", __func__);
+	}
+
+	if (on) {
+		rc = regulator_enable(reg_8921_hdmi_mvs);
+		if (rc) {
+			pr_err("'%s' regulator enable failed, rc=%d\n",
+				"8921_hdmi_mvs", rc);
+			return rc;
+		}
+		pr_debug("%s(on): success\n", __func__);
 	} else {
-		gpio_set_value(JET_GPIO_V_BOOST_5V_EN, 0);
-		gpio_free(JET_GPIO_V_BOOST_5V_EN);
-		pr_info("%s(off): success\n", __func__);
+		rc = regulator_disable(reg_8921_hdmi_mvs);
+		if (rc)
+			pr_warning("'%s' regulator disable failed, rc=%d\n",
+				"8921_hdmi_mvs", rc);
+		pr_debug("%s(off): success\n", __func__);
 	}
 
 	prev_on = on;
 
 	return 0;
-error:
-	return rc;
 }
 
 static int hdmi_core_power(int on, int show)
 {
-	static struct regulator *reg_8921_l23;
+	static struct regulator *reg_8921_l23, *reg_8921_s4;
 	static int prev_on;
 	int rc;
 
 	if (on == prev_on)
 		return 0;
 
+	
 	if (!reg_8921_l23) {
 		reg_8921_l23 = regulator_get(&hdmi_msm_device.dev, "hdmi_avdd");
 		if (IS_ERR(reg_8921_l23)) {
@@ -483,6 +512,20 @@ static int hdmi_core_power(int on, int show)
 			return -EINVAL;
 		}
 	}
+	if (!reg_8921_s4) {
+		reg_8921_s4 = regulator_get(&hdmi_msm_device.dev, "hdmi_vcc");
+		if (IS_ERR(reg_8921_s4)) {
+			pr_err("could not get reg_8921_s4, rc = %ld\n",
+				PTR_ERR(reg_8921_s4));
+			return -ENODEV;
+		}
+		rc = regulator_set_voltage(reg_8921_s4, 1800000, 1800000);
+		if (rc) {
+			pr_err("set_voltage failed for 8921_s4, rc=%d\n", rc);
+			return -EINVAL;
+		}
+	}
+
 	if (on) {
 		rc = regulator_set_optimum_mode(reg_8921_l23, 100000);
 		if (rc < 0) {
@@ -495,43 +538,95 @@ static int hdmi_core_power(int on, int show)
 				"hdmi_avdd", rc);
 			return rc;
 		}
-
-		pr_info("%s(on): success\n", __func__);
+		rc = regulator_enable(reg_8921_s4);
+		if (rc) {
+			pr_err("'%s' regulator enable failed, rc=%d\n",
+				"hdmi_vcc", rc);
+			return rc;
+		}
+		rc = gpio_request(100, "HDMI_DDC_CLK");
+		if (rc) {
+			pr_err("'%s'(%d) gpio_request failed, rc=%d\n",
+				"HDMI_DDC_CLK", 100, rc);
+			goto error1;
+		}
+		rc = gpio_request(101, "HDMI_DDC_DATA");
+		if (rc) {
+			pr_err("'%s'(%d) gpio_request failed, rc=%d\n",
+				"HDMI_DDC_DATA", 101, rc);
+			goto error2;
+		}
+		rc = gpio_request(102, "HDMI_HPD");
+		if (rc) {
+			pr_err("'%s'(%d) gpio_request failed, rc=%d\n",
+				"HDMI_HPD", 102, rc);
+			goto error3;
+		}
+		pr_debug("%s(on): success\n", __func__);
 	} else {
+		gpio_free(100);
+		gpio_free(101);
+		gpio_free(102);
+
 		rc = regulator_disable(reg_8921_l23);
 		if (rc) {
 			pr_err("disable reg_8921_l23 failed, rc=%d\n", rc);
 			return -ENODEV;
 		}
-
+		rc = regulator_disable(reg_8921_s4);
+		if (rc) {
+			pr_err("disable reg_8921_s4 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
 		rc = regulator_set_optimum_mode(reg_8921_l23, 100);
 		if (rc < 0) {
 			pr_err("set_optimum_mode l23 failed, rc=%d\n", rc);
 			return -EINVAL;
 		}
-		pr_info("%s(off): success\n", __func__);
+		pr_debug("%s(off): success\n", __func__);
 	}
+
 	prev_on = on;
+
+	return 0;
+
+error3:
+	gpio_free(101);
+error2:
+	gpio_free(100);
+error1:
+	regulator_disable(reg_8921_l23);
+	regulator_disable(reg_8921_s4);
 	return rc;
 }
-#endif /* CONFIG_FB_MSM_HDMI_MSM_PANEL */
 
-#ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
-static struct msm_wfd_platform_data wfd_pdata = {
-	.wfd_check_mdp_iommu_split = wfd_check_mdp_iommu_split_domain,
-};
+static int hdmi_cec_power(int on)
+{
+	static int prev_on;
+	int rc;
 
-static struct platform_device wfd_panel_device = {
-	.name = "wfd_panel",
-	.id = 0,
-	.dev.platform_data = NULL,
-};
+	if (on == prev_on)
+		return 0;
 
-static struct platform_device wfd_device = {
-	.name          = "msm_wfd",
-	.id            = -1,
-	.dev.platform_data = &wfd_pdata,
-};
+	if (on) {
+		rc = gpio_request(99, "HDMI_CEC_VAR");
+		if (rc) {
+			pr_err("'%s'(%d) gpio_request failed, rc=%d\n",
+				"HDMI_CEC_VAR", 99, rc);
+			goto error;
+		}
+		pr_debug("%s(on): success\n", __func__);
+	} else {
+		gpio_free(99);
+		pr_debug("%s(off): success\n", __func__);
+	}
+
+	prev_on = on;
+
+	return 0;
+error:
+	return rc;
+}
 #endif
 
 void __init jet_init_fb(void)
@@ -540,9 +635,6 @@ void __init jet_init_fb(void)
 #ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
 	platform_device_register(&wfd_panel_device);
 	platform_device_register(&wfd_device);
-#endif
-#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
-	platform_device_register(&hdmi_msm_device);
 #endif
   platform_device_register(&mipi_dsi_jet_panel_device);
   msm_fb_register_device("mdp", &mdp_pdata);
