@@ -1525,8 +1525,6 @@ static int mipi_elite_lcd_on(struct platform_device *pdev)
 
   mipi  = &mfd->panel_info.mipi;
 
-  elite_send_display_cmds(elite_display_on_cmds, elite_display_on_cmds_count);
-
   if (panel_type != PANEL_ID_ELITE_SHARP_HX)
     {
       if (!mipi_lcd_on) 
@@ -1546,6 +1544,7 @@ static int mipi_elite_lcd_on(struct platform_device *pdev)
       if (panel_type != PANEL_ID_NONE) 
         {
           elite_send_display_cmds(elite_video_on_cmds, elite_video_on_cmds_count);
+          elite_send_display_cmds(elite_display_on_cmds, elite_display_on_cmds_count);
           printk(KERN_INFO "%s: panel_type (%d)", __func__, panel_type);
         }
       else 
