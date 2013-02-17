@@ -934,6 +934,44 @@ cpuidle_enter_bail:
 	return 0;
 }
 
+#ifdef CONFIG_MACH_HTC
+struct msm_pm_sleep_status_data {
+	void *base_addr;
+	uint32_t cpu_offset;
+	uint32_t mask;
+};
+
+static struct msm_pm_sleep_status_data *msm_pm_slp_sts;
+
+static DEFINE_PER_CPU_SHARED_ALIGNED(enum msm_pm_sleep_mode,
+		msm_pm_last_slp_mode);
+
+bool msm_pm_verify_cpu_pc(unsigned int cpu)
+{
+	enum msm_pm_sleep_mode mode = per_cpu(msm_pm_last_slp_mode, cpu);
+
+/* ===FIX ME=== uart log fail on VilleC2*/
+#ifndef CONFIG_ARCH_MSM8X60
+	if (msm_pm_slp_sts) {
+		int acc_sts = __raw_readl(msm_pm_slp_sts->base_addr
+						+ cpu * msm_pm_slp_sts->cpu_offset);
+
+		if ((acc_sts & msm_pm_slp_sts->mask) &&
+			((mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE) ||
+			(mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE)))
+			return true;
+	}
+#else
+	if (msm_pm_slp_sts)
+		if ((mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE) ||
+			(mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE))
+				return false;
+#endif
+
+	return false;
+}
+#endif
+
 void msm_pm_cpu_enter_lowpower(unsigned int cpu)
 {
 	int i;
@@ -949,6 +987,26 @@ void msm_pm_cpu_enter_lowpower(unsigned int cpu)
 	if (MSM_PM_DEBUG_HOTPLUG & msm_pm_debug_mask)
 		pr_notice("CPU%u: %s: shutting down cpu\n", cpu, __func__);
 
+#ifdef CONFIG_MACH_HTC
+	if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_POWER_COLLAPSE;
+		msm_pm_power_collapse(false);
+	} else if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE;
+		msm_pm_power_collapse_standalone(false);
+	} else if (allow[MSM_PM_SLEEP_MODE_RETENTION]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_RETENTION;
+		msm_pm_retention();
+	} else if (allow[MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT;
+		msm_pm_swfi();
+	} else
+		per_cpu(msm_pm_last_slp_mode, cpu) = MSM_PM_SLEEP_MODE_NR;
+#else
 	if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE])
 		msm_pm_power_collapse(false);
 	else if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE])
@@ -957,6 +1015,7 @@ void msm_pm_cpu_enter_lowpower(unsigned int cpu)
 		msm_pm_retention();
 	else
 		msm_pm_swfi();
+#endif
 }
 
 static int msm_pm_enter(suspend_state_t state)
