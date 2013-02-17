@@ -258,11 +258,11 @@ static void set_speed(struct scalable *sc, const struct core_speed *tgt_s,
 		} else if (reason == SETRATE_HOTPLUG
 			   && msm_pm_verify_cpu_pc(SCALABLE_TO_CPU(sc, drv.scalable))) {
 			hfpll_disable(sc, 0);
+		}
 #else
 		set_pri_clk_src(sc, tgt_s->pri_src_sel);
 		hfpll_disable(sc, skip_regulators);
 #endif
-		}
 	} else if (strt_s->src != HFPLL && tgt_s->src == HFPLL) {
 #ifdef CONFIG_MACH_HTC
 		if (reason != SETRATE_HOTPLUG || sc == &drv.scalable[L2]) {
