@@ -25,6 +25,7 @@
 #include <sound/jack.h>
 #include <asm/mach-types.h>
 #include <mach/socinfo.h>
+#include <asm/system_info.h>
 #include <linux/mfd/wcd9xxx/core.h>
 #include "../sound/soc/msm/msm-pcm-routing.h"
 #include "../../../sound/soc/codecs/wcd9310.h"
@@ -65,8 +66,8 @@
 #define JACK_DETECT_INT PM8921_GPIO_IRQ(PM8921_IRQ_BASE, JACK_DETECT_GPIO)
 #define JACK_US_EURO_SEL_GPIO 35
 
-static u32 top_spk_pamp_gpio  = PM8921_GPIO_PM_TO_SYS(18);
-static u32 bottom_spk_pamp_gpio = PM8921_GPIO_PM_TO_SYS(19);
+static u32 top_spk_pamp_gpio  = PM8921_GPIO_PM_TO_SYS(19);
+static u32 bottom_spk_pamp_gpio = PM8921_GPIO_PM_TO_SYS(18);
 static int msm_spk_control;
 static int msm_ext_bottom_spk_pamp;
 static int msm_ext_top_spk_pamp;
@@ -75,7 +76,6 @@ static int msm_slim_0_tx_ch = 1;
 
 static int msm_btsco_rate = SAMPLE_RATE_8KHZ;
 static int msm_btsco_ch = 1;
-static int hdmi_rate_variable;
 static int msm_auxpcm_rate = SAMPLE_RATE_8KHZ;
 
 static struct clk *codec_clk;
@@ -102,7 +102,6 @@ MODULE_PARM_DESC(hs_detect_use_firmware, "Use firmware for headset detection");
 
 static int msm_enable_codec_ext_clk(struct snd_soc_codec *codec, int enable,
 					bool dapm);
-static bool msm_swap_gnd_mic(struct snd_soc_codec *codec);
 
 static struct tabla_mbhc_config mbhc_cfg = {
 	.headset_jack = &hs_jack,
@@ -136,8 +135,7 @@ static void msm_enable_ext_spk_amp_gpio(u32 spk_amp_gpio)
 		.pull      = PM_GPIO_PULL_NO,
 		.vin_sel	= PM_GPIO_VIN_S4,
 		.out_strength   = PM_GPIO_STRENGTH_MED,
-		.
-			function       = PM_GPIO_FUNC_NORMAL,
+		.function       = PM_GPIO_FUNC_NORMAL,
 	};
 
 	if (spk_amp_gpio == bottom_spk_pamp_gpio) {
@@ -156,7 +154,6 @@ static void msm_enable_ext_spk_amp_gpio(u32 spk_amp_gpio)
 			pr_debug("%s: enable Bottom spkr amp gpio\n", __func__);
 			gpio_direction_output(bottom_spk_pamp_gpio, 1);
 		}
-
 	} else if (spk_amp_gpio == top_spk_pamp_gpio) {
 
 		ret = gpio_request(top_spk_pamp_gpio, "TOP_SPK_AMP");
@@ -413,15 +410,6 @@ static int msm_enable_codec_ext_clk(struct snd_soc_codec *codec, int enable,
 	return r;
 }
 
-static bool msm_swap_gnd_mic(struct snd_soc_codec *codec)
-{
-	int value = gpio_get_value_cansleep(us_euro_sel_gpio);
-	pr_debug("%s: US EURO select switch %d to %d\n", __func__, value,
-		 !value);
-	gpio_set_value_cansleep(us_euro_sel_gpio, !value);
-	return true;
-}
-
 static int msm_mclk_event(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
@@ -436,8 +424,19 @@ static int msm_mclk_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
-static const struct snd_soc_dapm_widget msm_dapm_widgets[] = {
+static const struct snd_kcontrol_new earamp_switch_controls =
+	SOC_DAPM_SINGLE("Switch", 0, 0, 1, 0);
 
+static const struct snd_kcontrol_new spkamp_switch_controls =
+	SOC_DAPM_SINGLE("Switch", 0, 0, 1, 0);
+
+static const struct snd_soc_dapm_widget ville_dapm_widgets[] = {
+	SND_SOC_DAPM_MIXER("Lineout Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
+	SND_SOC_DAPM_MIXER("SPK AMP EN", SND_SOC_NOPM, 0, 0, &spkamp_switch_controls, 1),
+	SND_SOC_DAPM_MIXER("EAR AMP EN", SND_SOC_NOPM, 0, 0, &earamp_switch_controls, 1),
+};
+
+static const struct snd_soc_dapm_widget msm_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY("MCLK",  SND_SOC_NOPM, 0, 0,
 	msm_mclk_event, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 
@@ -446,10 +445,10 @@ static const struct snd_soc_dapm_widget msm_dapm_widgets[] = {
 
 	SND_SOC_DAPM_SPK("Ext Spk Top Pos", msm_spkramp_event),
 	SND_SOC_DAPM_SPK("Ext Spk Top Neg", msm_spkramp_event),
-	SND_SOC_DAPM_SPK("Ext Spk Top", msm_spkramp_event),
 
 	SND_SOC_DAPM_MIC("Handset Mic", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("Back Mic", NULL),
 	SND_SOC_DAPM_MIC("Digital Mic1", NULL),
 	SND_SOC_DAPM_MIC("ANCRight Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("ANCLeft Headset Mic", NULL),
@@ -463,38 +462,42 @@ static const struct snd_soc_dapm_widget msm_dapm_widgets[] = {
 
 };
 
+static const struct snd_soc_dapm_route tabla_1_x_audio_map[] = {
+
+	{"Lineout Mixer", NULL, "LINEOUT2"},
+	{"Lineout Mixer", NULL, "LINEOUT1"},
+};
+
+static const struct snd_soc_dapm_route tabla_2_x_audio_map[] = {
+
+	{"Lineout Mixer", NULL, "LINEOUT3"},
+	{"Lineout Mixer", NULL, "LINEOUT1"},
+};
+
 static const struct snd_soc_dapm_route common_audio_map[] = {
 
 	{"RX_BIAS", NULL, "MCLK"},
 	{"LDO_H", NULL, "MCLK"},
 
 	/* Speaker path */
-	{"Ext Spk Bottom Pos", NULL, "LINEOUT1"},
-	{"Ext Spk Bottom Neg", NULL, "LINEOUT3"},
+	{"Ext Spk Bottom Pos", NULL, "SPK AMP EN"},
+	{"Ext Spk Bottom Neg", NULL, "SPK AMP EN"},
+	{"SPK AMP EN", "Switch", "Lineout Mixer"},
 
-	{"Ext Spk Top Pos", NULL, "LINEOUT2"},
-	{"Ext Spk Top Neg", NULL, "LINEOUT4"},
-	{"Ext Spk Top", NULL, "LINEOUT5"},
+	/* Earpiece path */
+	{"Ext Spk Top Pos", NULL, "EAR AMP EN"},
+	{"Ext Spk Top Neg", NULL, "EAR AMP EN"},
+	{"EAR AMP EN", "Switch", "Lineout Mixer"},
 
 	/* Microphone path */
-	{"AMIC1", NULL, "MIC BIAS1 Internal1"},
-	{"MIC BIAS1 Internal1", NULL, "Handset Mic"},
+	{"AMIC1", NULL, "MIC BIAS1 External"},
+	{"MIC BIAS1 External", NULL, "Handset Mic"},
 
 	{"AMIC2", NULL, "MIC BIAS2 External"},
 	{"MIC BIAS2 External", NULL, "Headset Mic"},
 
-	/**
-	 * AMIC3 and AMIC4 inputs are connected to ANC microphones
-	 * These mics are biased differently on CDP and FLUID
-	 * routing entries below are based on bias arrangement
-	 * on FLUID.
-	 */
-	{"AMIC3", NULL, "MIC BIAS3 Internal1"},
-	{"MIC BIAS3 Internal1", NULL, "MIC BIAS2 External"},
-	{"MIC BIAS2 External", NULL, "ANCRight Headset Mic"},
-	{"AMIC4", NULL, "MIC BIAS1 Internal2"},
-	{"MIC BIAS1 Internal2", NULL, "MIC BIAS2 External"},
-	{"MIC BIAS2 External", NULL, "ANCLeft Headset Mic"},
+	{"AMIC3", NULL, "MIC BIAS3 External"},
+	{"MIC BIAS3 External", NULL, "Back Mic"},
 
 	{"HEADPHONE", NULL, "LDO_H"},
 
@@ -543,33 +546,21 @@ static const struct snd_soc_dapm_route common_audio_map[] = {
 	{"DMIC5", NULL, "MIC BIAS4 External"},
 	{"MIC BIAS4 External", NULL, "Digital Mic5"},
 
-	/* Tabla digital Mic6 - back bottom digital Mic on Liquid and
-	 * bottom mic on CDP. FLUID/MTP do not have dmic6 installed.
-	 */
-	{"DMIC6", NULL, "MIC BIAS4 External"},
-	{"MIC BIAS4 External", NULL, "Digital Mic6"},
 };
 
 static const char *spk_function[] = {"Off", "On"};
 static const char *slim0_rx_ch_text[] = {"One", "Two"};
 static const char *slim0_tx_ch_text[] = {"One", "Two", "Three", "Four"};
-static const char * const hdmi_rate[] = {"Default", "Variable"};
 
 static const struct soc_enum msm_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, spk_function),
 	SOC_ENUM_SINGLE_EXT(2, slim0_rx_ch_text),
 	SOC_ENUM_SINGLE_EXT(4, slim0_tx_ch_text),
-	SOC_ENUM_SINGLE_EXT(2, hdmi_rate),
 };
 
 static const char *btsco_rate_text[] = {"8000", "16000"};
 static const struct soc_enum msm_btsco_enum[] = {
 		SOC_ENUM_SINGLE_EXT(2, btsco_rate_text),
-};
-
-static const char *auxpcm_rate_text[] = {"rate_8000", "rate_16000"};
-static const struct soc_enum msm_auxpcm_enum[] = {
-		SOC_ENUM_SINGLE_EXT(2, auxpcm_rate_text),
 };
 
 static int msm_slim_0_rx_ch_get(struct snd_kcontrol *kcontrol,
@@ -636,51 +627,6 @@ static int msm_btsco_rate_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static int msm_auxpcm_rate_get(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	pr_debug("%s: msm_auxpcm_rate  = %d", __func__,
-		msm_auxpcm_rate);
-	ucontrol->value.integer.value[0] = msm_auxpcm_rate;
-	return 0;
-}
-
-static int msm_auxpcm_rate_put(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	switch (ucontrol->value.integer.value[0]) {
-	case 0:
-		msm_auxpcm_rate = SAMPLE_RATE_8KHZ;
-		break;
-	case 1:
-		msm_auxpcm_rate = SAMPLE_RATE_16KHZ;
-		break;
-	default:
-		msm_auxpcm_rate = SAMPLE_RATE_8KHZ;
-		break;
-	}
-	pr_debug("%s: msm_auxpcm_rate = %d"
-		"ucontrol->value.integer.value[0] = %d\n", __func__,
-		msm_auxpcm_rate,
-		(int)ucontrol->value.integer.value[0]);
-	return 0;
-}
-
-static int msm_hdmi_rate_put(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	hdmi_rate_variable = ucontrol->value.integer.value[0];
-	pr_debug("%s: hdmi_rate_variable = %d\n", __func__, hdmi_rate_variable);
-	return 0;
-}
-
-static int msm_hdmi_rate_get(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	ucontrol->value.integer.value[0] = hdmi_rate_variable;
-	return 0;
-}
-
 static const struct snd_kcontrol_new tabla_msm_controls[] = {
 	SOC_ENUM_EXT("Speaker Function", msm_enum[0], msm_get_spk,
 		msm_set_spk),
@@ -688,13 +634,6 @@ static const struct snd_kcontrol_new tabla_msm_controls[] = {
 		msm_slim_0_rx_ch_get, msm_slim_0_rx_ch_put),
 	SOC_ENUM_EXT("SLIM_0_TX Channels", msm_enum[2],
 		msm_slim_0_tx_ch_get, msm_slim_0_tx_ch_put),
-	SOC_ENUM_EXT("Internal BTSCO SampleRate", msm_btsco_enum[0],
-		msm_btsco_rate_get, msm_btsco_rate_put),
-	SOC_ENUM_EXT("AUX PCM SampleRate", msm_auxpcm_enum[0],
-		msm_auxpcm_rate_get, msm_auxpcm_rate_put),
-	SOC_ENUM_EXT("HDMI RX Rate", msm_enum[3],
-					msm_hdmi_rate_get,
-					msm_hdmi_rate_put),
 };
 
 static void *def_tabla_mbhc_cal(void)
@@ -867,26 +806,42 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	struct snd_soc_codec *codec = rtd->codec;
 	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
-	struct pm_gpio jack_gpio_cfg = {
-		.direction = PM_GPIO_DIR_IN,
-		.pull = PM_GPIO_PULL_UP_1P5,
-		.function = PM_GPIO_FUNC_NORMAL,
-		.vin_sel = 2,
-		.inv_int_pol = 0,
-	};
+	u8 tabla_version;
 
 	pr_debug("%s(), dev_name%s\n", __func__, dev_name(cpu_dai->dev));
 
-	if (machine_is_msm8960_liquid()) {
-		top_spk_pamp_gpio = (PM8921_GPIO_PM_TO_SYS(19));
-		bottom_spk_pamp_gpio = (PM8921_GPIO_PM_TO_SYS(18));
-	}
+	rtd->pmdown_time = 0;
+	if (system_rev == 1) 
+          {
+            //XB lower the receiver gain
+            err = snd_soc_add_codec_controls(codec, tabla_xbvol_controls,
+                                             ARRAY_SIZE(tabla_xbvol_controls));
+            if (err < 0)
+              return err;
+          }
 
 	snd_soc_dapm_new_controls(dapm, msm_dapm_widgets,
 				ARRAY_SIZE(msm_dapm_widgets));
 
+	snd_soc_dapm_new_controls(dapm, ville_dapm_widgets,
+				ARRAY_SIZE(ville_dapm_widgets));
+
 	snd_soc_dapm_add_routes(dapm, common_audio_map,
 		ARRAY_SIZE(common_audio_map));
+
+	/* determine HW connection based on codec revision */
+	tabla_version = snd_soc_read(codec, TABLA_A_CHIP_VERSION);
+	tabla_version &=  0x1F;
+	pr_err("%s : Tabla version %u\n", __func__, (u32)tabla_version);
+
+	if ((tabla_version == TABLA_VERSION_1_0) ||
+		(tabla_version == TABLA_VERSION_1_1)) {
+		snd_soc_dapm_add_routes(dapm, tabla_1_x_audio_map,
+			 ARRAY_SIZE(tabla_1_x_audio_map));
+	} else {
+		snd_soc_dapm_add_routes(dapm, tabla_2_x_audio_map,
+			 ARRAY_SIZE(tabla_2_x_audio_map));
+	}
 
 	snd_soc_dapm_enable_pin(dapm, "Ext Spk Bottom Pos");
 	snd_soc_dapm_enable_pin(dapm, "Ext Spk Bottom Neg");
@@ -896,9 +851,7 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_sync(dapm);
 
 	err = snd_soc_jack_new(codec, "Headset Jack",
-			       (SND_JACK_HEADSET | SND_JACK_LINEOUT |
-				SND_JACK_OC_HPHL | SND_JACK_OC_HPHR |
-				SND_JACK_UNSUPPORTED),
+			       (SND_JACK_HEADSET | SND_JACK_OC_HPHL | SND_JACK_OC_HPHR),
 				&hs_jack);
 	if (err) {
 		pr_err("failed to create new jack\n");
@@ -906,7 +859,7 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	}
 
 	err = snd_soc_jack_new(codec, "Button Jack",
-			       TABLA_JACK_BUTTON_MASK, &button_jack);
+			       SND_JACK_BTN_0, &button_jack);
 	if (err) {
 		pr_err("failed to create new jack\n");
 		return err;
@@ -914,30 +867,12 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 
 	codec_clk = clk_get(cpu_dai->dev, "osr_clk");
 
-	if (machine_is_msm8960_cdp())
-		mbhc_cfg.swap_gnd_mic = msm_swap_gnd_mic;
+	/* Do not pass MBHC calibration data to disable HS detection.
+	 * Otherwise, sending project-based cal-data to enable
+	 * MBHC mechanism that tabla provides */
+	tabla_hs_detect(codec, &mbhc_cfg);
 
-	if (hs_detect_use_gpio) {
-		mbhc_cfg.gpio = PM8921_GPIO_PM_TO_SYS(JACK_DETECT_GPIO);
-		mbhc_cfg.gpio_irq = JACK_DETECT_INT;
-		if (hs_detect_extn_cable)
-			mbhc_cfg.detect_extn_cable = true;
-	}
-
-	if (mbhc_cfg.gpio) {
-		err = pm8xxx_gpio_config(mbhc_cfg.gpio, &jack_gpio_cfg);
-		if (err) {
-			pr_err("%s: pm8xxx_gpio_config JACK_DETECT failed %d\n",
-			       __func__, err);
-			return err;
-		}
-	}
-
-	mbhc_cfg.read_fw_bin = hs_detect_use_firmware;
-
-	err = tabla_hs_detect(codec, &mbhc_cfg);
-
-	return err;
+	return 0;
 }
 
 static int msm_slim_0_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
@@ -996,10 +931,7 @@ static int msm_hdmi_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	pr_debug("%s channels->min %u channels->max %u ()\n", __func__,
 			channels->min, channels->max);
 
-	if (channels->max < 2)
-		channels->min = channels->max = 2;
-	if (!hdmi_rate_variable)
-		rate->min = rate->max = 48000;
+        rate->min = rate->max = 48000;
 
 	return 0;
 }
