@@ -47,6 +47,8 @@ extern struct rpm_regulator_platform_data ville_rpm_regulator_pdata __devinitdat
 
 #define GPIO_VREG_ID_EXT_5V		0
 #define GPIO_VREG_ID_EXT_L2		1
+#define GPIO_VREG_ID_EXT_3P3V           2
+#define GPIO_VREG_ID_EXT_OTG_SW		3
 
 #define PMGPIO(x) (x)
 
