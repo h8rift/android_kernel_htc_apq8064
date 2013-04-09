@@ -21,10 +21,6 @@
 #include <linux/gfp.h>
 #include <linux/msm_ipc.h>
 
-#ifdef CONFIG_ANDROID_PARANOID_NETWORK
-#include <linux/android_aid.h>
-#endif
-
 #include <asm/string.h>
 #include <asm/atomic.h>
 
@@ -39,20 +35,6 @@ static int sockets_enabled;
 static struct proto msm_ipc_proto;
 static const struct proto_ops msm_ipc_proto_ops;
 
-#ifdef CONFIG_ANDROID_PARANOID_NETWORK
-static inline int check_permissions(void)
-{
-	int rc = 0;
-	if (!current_euid() || in_egroup_p(AID_NET_RAW))
-		rc = 1;
-	return rc;
-}
-# else
-static inline int check_permissions(void)
-{
-	return 1;
-}
-#endif
 
 static struct sk_buff_head *msm_ipc_router_build_msg(unsigned int num_sect,
 					  struct iovec const *msg_sect,
@@ -189,11 +171,6 @@ static int msm_ipc_router_create(struct net *net,
 	struct sock *sk;
 	struct msm_ipc_port *port_ptr;
 	void *pil;
-
-	if (!check_permissions()) {
-		pr_err("%s: Do not have permissions\n", __func__);
-		return -EPERM;
-	}
 
 	if (unlikely(protocol != 0)) {
 		pr_err("%s: Protocol not supported\n", __func__);
@@ -367,8 +344,13 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 	struct sock *sk = sock->sk;
 	struct msm_ipc_port *port_ptr;
 	struct server_lookup_args server_arg;
+#ifdef CONFIG_MSM8960_ONLY
+	struct msm_ipc_port_addr *port_addr = NULL;
+	unsigned int n, port_addr_sz = 0;
+#else
 	struct msm_ipc_server_info *srv_info = NULL;
 	unsigned int n, srv_info_sz = 0;
+#endif 
 	int ret;
 
 	if (!sk)
@@ -408,6 +390,39 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 			ret = -EINVAL;
 			break;
 		}
+#ifdef CONFIG_MSM8960_ONLY
+		if (server_arg.num_entries_in_array) {
+			port_addr_sz = server_arg.num_entries_in_array *
+					sizeof(*port_addr);
+			port_addr = kmalloc(port_addr_sz, GFP_KERNEL);
+			if (!port_addr) {
+				ret = -ENOMEM;
+				break;
+			}
+		}
+		ret = msm_ipc_router_lookup_server_name(&server_arg.port_name,
+				port_addr, server_arg.num_entries_in_array,
+				server_arg.lookup_mask);
+		if (ret < 0) {
+			pr_err("%s: Server not found\n", __func__);
+			ret = -ENODEV;
+			kfree(port_addr);
+			break;
+		}
+		server_arg.num_entries_found = ret;
+
+		ret = copy_to_user((void *)arg, &server_arg,
+				   sizeof(server_arg));
+		if (port_addr_sz) {
+			ret = copy_to_user((void *)(arg + sizeof(server_arg)),
+					   port_addr, port_addr_sz);
+			if (ret)
+				ret = -EFAULT;
+			kfree(port_addr);
+		}
+
+#else 
+
 		if (server_arg.num_entries_in_array) {
 			srv_info_sz = server_arg.num_entries_in_array *
 					sizeof(*srv_info);
@@ -437,6 +452,7 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 				ret = -EFAULT;
 			kfree(srv_info);
 		}
+#endif 
 		break;
 
 	case IPC_ROUTER_IOCTL_BIND_CONTROL_PORT:
