@@ -1365,9 +1365,9 @@ static struct snd_soc_dai_link msm_dai_common[] = {
 		.be_id = MSM_FRONTEND_DAI_VOLTE,
 	},
 	{
-		.name = "SGLTE",
-		.stream_name = "SGLTE",
-		.cpu_dai_name   = "SGLTE",
+		.name = "Voice2",
+		.stream_name = "Voice2",
+		.cpu_dai_name   = "Voice2",
 		.platform_name  = "msm-pcm-voice",
 		.dynamic = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
