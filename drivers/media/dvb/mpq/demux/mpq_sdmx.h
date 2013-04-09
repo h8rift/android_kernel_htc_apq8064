@@ -27,29 +27,33 @@
 #define SDMX_FILTER_ERR_INVALID_SCRAMBLE_BITS     BIT(3)
 #define SDMX_FILTER_ERR_KL_IND_NOT_SET            BIT(4)
 #define SDMX_FILTER_ERR_CAS_DECRYPT_ERROR         BIT(5)
-#define SDMX_FILTER_ERR_SEC_VERIF_GENERAL_FAIL    BIT(6)
-#define SDMX_FILTER_ERR_SEC_VERIF_CRC32_FAIL      BIT(7)
-#define SDMX_FILTER_ERR_SEC_INTERNAL_MALLOC_FAIL  BIT(8)
-#define SDMX_FILTER_ERR_SEC_LEN_INVALID           BIT(9)
-#define SDMX_FILTER_ERR_SEC_PUSI_PTR_INVALID      BIT(10)
-#define SDMX_FILTER_ERR_TS_SYNC_BYTE_INVALID      BIT(11)
-#define SDMX_FILTER_ERR_TS_TRANSPORT_ERR          BIT(12)
-#define SDMX_FILTER_ERR_CONT_CNT_INVALID          BIT(13)
-#define SDMX_FILTER_ERR_CONT_CNT_DUPLICATE        BIT(14)
-#define SDMX_FILTER_ERR_INVALID_PES_HDR           BIT(15)
-#define SDMX_FILTER_ERR_INVALID_PES_LEN           BIT(16)
-#define SDMX_FILTER_ERR_INVALID_PES_ENCRYPTION    BIT(17)
-#define SDMX_FILTER_ERR_SECURITY_FAULT            BIT(18)
-#define SDMX_FILTER_ERR_IN_NS_BUFFER              BIT(19)
+#define SDMX_FILTER_ERR_SEC_VERIF_CRC32_FAIL      BIT(6)
+#define SDMX_FILTER_ERR_SEC_INTERNAL_MALLOC_FAIL  BIT(7)
+#define SDMX_FILTER_ERR_SEC_LEN_INVALID           BIT(8)
+#define SDMX_FILTER_ERR_SEC_PUSI_PTR_INVALID      BIT(9)
+#define SDMX_FILTER_ERR_TS_SYNC_BYTE_INVALID      BIT(10)
+#define SDMX_FILTER_ERR_TS_TRANSPORT_ERR          BIT(11)
+#define SDMX_FILTER_ERR_CONT_CNT_INVALID          BIT(12)
+#define SDMX_FILTER_ERR_CONT_CNT_DUPLICATE        BIT(13)
+#define SDMX_FILTER_ERR_INVALID_PES_HDR           BIT(14)
+#define SDMX_FILTER_ERR_INVALID_PES_LEN           BIT(15)
+#define SDMX_FILTER_ERR_INVALID_PES_ENCRYPTION    BIT(16)
+#define SDMX_FILTER_ERR_SECURITY_FAULT            BIT(17)
+#define SDMX_FILTER_ERR_IN_NS_BUFFER              BIT(18)
 
 /* Filter-level status indicators */
 #define SDMX_FILTER_STATUS_EOS                    BIT(0)
+#define SDMX_FILTER_STATUS_WR_PTR_CHANGED         BIT(1)
+
+/* Filter-level flags */
+#define SDMX_FILTER_FLAG_VERIFY_SECTION_CRC	BIT(0)
 
 #define SDMX_INVALID_SESSION_HANDLE		(-1)
 #define SDMX_INVALID_FILTER_HANDLE		(-1)
 
 /* Input flags */
-#define SDMX_INPUT_FLAG_EOS BIT(0)
+#define SDMX_INPUT_FLAG_EOS		BIT(0)
+#define SDMX_INPUT_FLAG_DBG_ENABLE	BIT(1)
 
 
 enum sdmx_buf_mode {
@@ -89,10 +93,9 @@ enum sdmx_status {
 	SDMX_STATUS_SINGLE_PID_RAW_FILTER = -11,
 	SDMX_STATUS_INP_BUF_INVALID_PARAMS = -12,
 	SDMX_STATUS_INVALID_FILTER_CFG = -13,
-	SDMX_STATUS_ILLEGAL_WR_PTR_CHANGE = -14,
-	SDMX_STATUS_STALLED_IN_PULL_MODE = -15,
-	SDMX_STATUS_SECURITY_FAULT = -16,
-	SDMX_STATUS_NS_BUFFER_ERROR = -17,
+	SDMX_STATUS_STALLED_IN_PULL_MODE = -14,
+	SDMX_STATUS_SECURITY_FAULT = -15,
+	SDMX_STATUS_NS_BUFFER_ERROR = -16,
 };
 
 enum sdmx_filter {
@@ -101,6 +104,12 @@ enum sdmx_filter {
 	SDMX_SECTION_FILTER,		/* Section */
 	SDMX_PCR_FILTER,		/* PCR */
 	SDMX_RAW_FILTER,		/* Recording */
+};
+
+enum sdmx_raw_out_format {
+	SDMX_188_OUTPUT,
+	SDMX_192_HEAD_OUTPUT,
+	SDMX_192_TAIL_OUTPUT
 };
 
 struct sdmx_session_dbg_counters {
@@ -130,6 +139,20 @@ struct sdmx_filter_dbg_counters {
 	u32 ts_pkt_key_not_ready;
 };
 
+struct sdmx_pes_counters {
+	/* Number of TS packets with the TEI flag set */
+	u32 transport_err_count;
+
+	/* Number of TS packets with continuity counter errors */
+	u32 continuity_err_count;
+
+	/* Number of TS packets composing this PES frame */
+	u32 pes_ts_count;
+
+	/* Number of TS packets dropped due to full buffer */
+	u32 drop_count;
+};
+
 struct sdmx_buff_descr {
 	/* Physical address where buffer starts */
 	void *base_addr;
@@ -155,9 +178,7 @@ struct sdmx_metadata_header {
 	/* Payload length */
 	u32 payload_length;
 
-	/* Total metadata length (including this header, plus optional
-	 * additional metadata.
-	 */
+	/* Number of meta data bytes immediately following this header */
 	u32 metadata_length;
 };
 
@@ -204,7 +225,7 @@ int sdmx_set_session_cfg(int session_handle, enum sdmx_proc_mode proc_mode,
 int sdmx_add_filter(int session_handle, u16 pid, enum sdmx_filter filter_type,
 	struct sdmx_buff_descr *meta_data_buf, enum sdmx_buf_mode data_buf_mode,
 	u32 num_data_bufs, struct sdmx_buff_descr *data_bufs,
-	int *filter_handle);
+	int *filter_handle, enum sdmx_raw_out_format ts_out_format, u32 flags);
 
 int sdmx_remove_filter(int session_handle, int filter_handle);
 

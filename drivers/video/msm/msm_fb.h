@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2013, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2008-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -37,7 +37,9 @@
 #include <linux/fb.h>
 #include <linux/list.h>
 #include <linux/types.h>
+#include <linux/switch.h>
 #include <linux/msm_mdp.h>
+
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 #endif
@@ -138,6 +140,8 @@ struct msm_fb_data_type {
 	int (*stop_histogram) (struct fb_info *info, uint32_t block);
 	void (*vsync_ctrl) (int enable);
 	void (*vsync_init) (int cndx);
+	void (*update_panel_info)(struct msm_fb_data_type *mfd);
+	bool (*is_panel_ready)(void);
 	void *vsync_show;
 	void *cursor_buf;
 	void *cursor_buf_phys;
@@ -178,6 +182,7 @@ struct msm_fb_data_type {
 	struct list_head writeback_busy_queue;
 	struct list_head writeback_free_queue;
 	struct list_head writeback_register_queue;
+	struct switch_dev writeback_sdev;
 	wait_queue_head_t wait_q;
 	struct ion_client *iclient;
 	unsigned long display_iova;
@@ -208,6 +213,10 @@ struct msm_fb_data_type {
 	void *msm_fb_backup;
 	boolean panel_driver_on;
 	int vsync_sysfs_created;
+	void *copy_splash_buf;
+	unsigned char *copy_splash_phys;
+	uint32 sec_mapped;
+	uint32 sec_active;
 };
 struct msm_fb_backup_type {
 	struct fb_info info;

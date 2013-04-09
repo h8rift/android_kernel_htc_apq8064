@@ -2,7 +2,7 @@
 
 /*Qualcomm Secure Execution Environment Communicator (QSEECOM) driver
  *
- * Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -718,6 +718,9 @@ static int qseecom_load_app(struct qseecom_dev_handle *data, void __user *argp)
 			&resp, sizeof(resp));
 		if (ret) {
 			pr_err("scm_call to load app failed\n");
+			if (!IS_ERR_OR_NULL(ihandle))
+				ion_free(qseecom.ion_clnt, ihandle);
+			qsee_disable_clock_vote(CLK_SFPB);
 			return -EINVAL;
 		}
 
@@ -1474,6 +1477,7 @@ int qseecom_start_app(struct qseecom_handle **handle,
 
 		if (ret < 0) {
 			kfree(*handle);
+			kfree(data);
 			*handle = NULL;
 			return ret;
 		}
@@ -1483,6 +1487,9 @@ int qseecom_start_app(struct qseecom_handle **handle,
 		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
 		if (!entry) {
 			pr_err("kmalloc failed\n");
+			kfree(data);
+			kfree(*handle);
+			*handle = NULL;
 			return -ENOMEM;
 		}
 		entry->app_id = ret;
@@ -1524,8 +1531,8 @@ EXPORT_SYMBOL(qseecom_start_app);
 int qseecom_shutdown_app(struct qseecom_handle **handle)
 {
 	int ret = -EINVAL;
-	struct qseecom_dev_handle *data =
-			(struct qseecom_dev_handle *) ((*handle)->dev);
+	struct qseecom_dev_handle *data;
+
 	struct qseecom_registered_kclient_list *kclient = NULL;
 	unsigned long flags = 0;
 	bool found_handle = false;
@@ -1534,11 +1541,11 @@ int qseecom_shutdown_app(struct qseecom_handle **handle)
 		pr_err("This functionality is UNSUPPORTED in version 1.3\n");
 		return -EINVAL;
 	}
-	if (*handle == NULL) {
+	if ((handle == NULL)  || (*handle == NULL)) {
 		pr_err("Handle is not initialized\n");
 		return -EINVAL;
 	}
-
+	data =	(struct qseecom_dev_handle *) ((*handle)->dev);
 	spin_lock_irqsave(&qseecom.registered_kclient_list_lock, flags);
 	list_for_each_entry(kclient, &qseecom.registered_kclient_list_head,
 				list) {

@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -314,6 +314,9 @@ void diag_mask_update_fn(struct work_struct *work)
 	diag_send_event_mask_update(smd_info->ch, diag_event_num_bytes);
 	diag_send_feature_mask_update(smd_info->ch, smd_info->peripheral);
 
+	if (smd_info->notify_context == SMD_EVENT_OPEN)
+		diag_send_diag_mode_update_by_smd(smd_info, MODE_REALTIME);
+
 	smd_info->notify_context = 0;
 }
 
@@ -525,6 +528,10 @@ int diag_process_apps_masks(unsigned char *buf, int len)
 			*(int *)(driver->apps_rsp_buf + 4) = 0x3; /* op. ID */
 			*(int *)(driver->apps_rsp_buf + 8) = 0x0; /* success */
 			payload_length = 8 + ((*(int *)(buf + 4)) + 7)/8;
+			if (payload_length > APPS_BUF_SIZE - 12) {
+				pr_err("diag: log masks: buffer overflow\n");
+				return -EIO;
+			}
 			for (i = 0; i < payload_length; i++)
 				*(int *)(driver->apps_rsp_buf+12+i) = *(buf+i);
 
@@ -608,6 +615,10 @@ int diag_process_apps_masks(unsigned char *buf, int len)
 					rt_last_ssid) {
 					rt_mask_size = 4 * (rt_last_ssid -
 						rt_first_ssid + 1);
+					if (rt_mask_size > APPS_BUF_SIZE - 8) {
+						pr_err("diag: rt masks: buffer overflow\n");
+						return -EIO;
+					}
 					memcpy(driver->apps_rsp_buf+8,
 						rt_mask_ptr, rt_mask_size);
 					encode_rsp_and_send(8+rt_mask_size-1);
@@ -621,7 +632,17 @@ int diag_process_apps_masks(unsigned char *buf, int len)
 	else if ((*buf == 0x7d) && (*(buf+1) == 0x4)) {
 		ssid_first = *(uint16_t *)(buf + 2);
 		ssid_last = *(uint16_t *)(buf + 4);
+		if (ssid_last < ssid_first) {
+			pr_err("diag: Invalid msg mask ssid values, first: %d, last: %d\n",
+				ssid_first, ssid_last);
+			return -EIO;
+		}
 		ssid_range = 4 * (ssid_last - ssid_first + 1);
+		if (ssid_range > APPS_BUF_SIZE - 8) {
+			pr_err("diag: Not enough space for message mask, ssid_range: %d\n",
+				ssid_range);
+			return -EIO;
+		}
 		pr_debug("diag: received mask update for ssid_first = %d, ssid_last = %d",
 			ssid_first, ssid_last);
 		diag_update_msg_mask(ssid_first, ssid_last , buf + 8);
@@ -716,8 +737,8 @@ int diag_process_apps_masks(unsigned char *buf, int len)
 					(driver->log_on_demand_support)) {
 			driver->apps_rsp_buf[0] = 0x78;
 			/* Copy log code received */
-			*(uint16_t *)(driver->apps_rsp_buf+1) =
-							 *(uint16_t *)buf;
+			*(uint16_t *)(driver->apps_rsp_buf + 1) =
+							*(uint16_t *)(buf + 1);
 			driver->apps_rsp_buf[3] = 0x1;/* Unknown */
 			encode_rsp_and_send(3);
 		}

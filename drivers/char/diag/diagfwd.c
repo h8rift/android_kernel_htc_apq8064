@@ -98,7 +98,7 @@ static int has_device_tree(void)
 
 int chk_config_get_id(void)
 {
-	/* For all Fusion targets, Modem will always be present */
+	/* For all Fusion targets,  Modem will always be present */
 	if (machine_is_msm8x60_fusion() || machine_is_msm8x60_fusn_ffa())
 		return 0;
 
@@ -116,6 +116,7 @@ int chk_config_get_id(void)
 			return AO8960_TOOLS_ID;
 		case MSM_CPU_8064:
 		case MSM_CPU_8064AB:
+		case MSM_CPU_8064AA:
 			return APQ8064_TOOLS_ID;
 		case MSM_CPU_8930:
 		case MSM_CPU_8930AA:
@@ -145,6 +146,7 @@ int chk_apps_only(void)
 	case MSM_CPU_8960AB:
 	case MSM_CPU_8064:
 	case MSM_CPU_8064AB:
+	case MSM_CPU_8064AA:
 	case MSM_CPU_8930:
 	case MSM_CPU_8930AA:
 	case MSM_CPU_8930AB:
@@ -223,6 +225,93 @@ void chk_logging_wakeup(void)
 			wake_up_interruptible(&driver->wait_q);
 		}
 	}
+}
+
+void process_lock_enabling(struct diag_nrt_wake_lock *lock, int real_time)
+{
+	unsigned long read_lock_flags;
+
+	spin_lock_irqsave(&lock->read_spinlock, read_lock_flags);
+	if (real_time)
+		lock->enabled = 0;
+	else
+		lock->enabled = 1;
+	lock->ref_count = 0;
+	lock->copy_count = 0;
+	wake_unlock(&lock->read_lock);
+	spin_unlock_irqrestore(&lock->read_spinlock, read_lock_flags);
+}
+
+void process_lock_on_notify(struct diag_nrt_wake_lock *lock)
+{
+	unsigned long read_lock_flags;
+
+	spin_lock_irqsave(&lock->read_spinlock, read_lock_flags);
+	/*
+	 * Do not work with ref_count here in case
+	 * of spurious interrupt
+	 */
+	if (lock->enabled)
+		wake_lock(&lock->read_lock);
+	spin_unlock_irqrestore(&lock->read_spinlock, read_lock_flags);
+}
+
+void process_lock_on_read(struct diag_nrt_wake_lock *lock, int pkt_len)
+{
+	unsigned long read_lock_flags;
+
+	spin_lock_irqsave(&lock->read_spinlock, read_lock_flags);
+	if (lock->enabled) {
+		if (pkt_len > 0) {
+			/*
+			 * We have an data that is read that
+			 * needs to be processed, make sure the
+			 * processor does not go to sleep
+			 */
+			lock->ref_count++;
+			if (!wake_lock_active(&lock->read_lock))
+				wake_lock(&lock->read_lock);
+		} else {
+			/*
+			 * There was no data associated with the
+			 * read from the smd, unlock the wake lock
+			 * if it is not needed.
+			 */
+			if (lock->ref_count < 1) {
+				if (wake_lock_active(&lock->read_lock))
+					wake_unlock(&lock->read_lock);
+				lock->ref_count = 0;
+				lock->copy_count = 0;
+			}
+		}
+	}
+	spin_unlock_irqrestore(&lock->read_spinlock, read_lock_flags);
+}
+
+void process_lock_on_copy(struct diag_nrt_wake_lock *lock)
+{
+	unsigned long read_lock_flags;
+
+	spin_lock_irqsave(&lock->read_spinlock, read_lock_flags);
+	if (lock->enabled)
+		lock->copy_count++;
+	spin_unlock_irqrestore(&lock->read_spinlock, read_lock_flags);
+}
+
+void process_lock_on_copy_complete(struct diag_nrt_wake_lock *lock)
+{
+	unsigned long read_lock_flags;
+
+	spin_lock_irqsave(&lock->read_spinlock, read_lock_flags);
+	if (lock->enabled) {
+		lock->ref_count -= lock->copy_count;
+		if (lock->ref_count < 1) {
+			wake_unlock(&lock->read_lock);
+			lock->ref_count = 0;
+		}
+		lock->copy_count = 0;
+	}
+	spin_unlock_irqrestore(&lock->read_spinlock, read_lock_flags);
 }
 
 /* Process the data read from the smd data channel */
@@ -322,6 +411,8 @@ void diag_smd_send_req(struct diag_smd_info *smd_info)
 			smd_read(smd_info->ch, temp_buf, r);
 			temp_buf += r;
 		}
+		if (!driver->real_time_mode && smd_info->type == SMD_DATA_TYPE)
+			process_lock_on_read(&smd_info->nrt_lock, pkt_len);
 
 		if (total_recd > 0) {
 			if (!buf) {
@@ -349,12 +440,32 @@ void diag_read_smd_work_fn(struct work_struct *work)
 	diag_smd_send_req(smd_info);
 }
 
+#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
+static void diag_mem_dev_mode_ready_update(int index, int hsic_updated)
+{
+	if (hsic_updated) {
+		unsigned long flags;
+		spin_lock_irqsave(&driver->hsic_ready_spinlock, flags);
+		driver->data_ready[index] |= USER_SPACE_DATA_TYPE;
+		spin_unlock_irqrestore(&driver->hsic_ready_spinlock, flags);
+	} else {
+		driver->data_ready[index] |= USER_SPACE_DATA_TYPE;
+	}
+}
+#else
+static void diag_mem_dev_mode_ready_update(int index, int hsic_updated)
+{
+	(void) hsic_updated;
+	driver->data_ready[index] |= USER_SPACE_DATA_TYPE;
+}
+#endif
 int diag_device_write(void *buf, int data_type, struct diag_request *write_ptr)
 {
 	int i, err = 0, index;
 	index = 0;
 
 	if (driver->logging_mode == MEMORY_DEVICE_MODE) {
+		int hsic_updated = 0;
 		if (data_type == APPS_DATA) {
 			for (i = 0; i < driver->poolsize_write_struct; i++)
 				if (driver->buf_tbl[i].length == 0) {
@@ -375,6 +486,7 @@ int diag_device_write(void *buf, int data_type, struct diag_request *write_ptr)
 		else if (data_type == HSIC_DATA || data_type == HSIC_2_DATA) {
 			unsigned long flags;
 			int foundIndex = -1;
+			hsic_updated = 1;
 			index = data_type - HSIC_DATA;
 			spin_lock_irqsave(&diag_hsic[index].hsic_spinlock,
 									flags);
@@ -407,7 +519,7 @@ int diag_device_write(void *buf, int data_type, struct diag_request *write_ptr)
 						 driver->logging_process_id)
 				break;
 		if (i < driver->num_clients) {
-			driver->data_ready[i] |= USER_SPACE_DATA_TYPE;
+			diag_mem_dev_mode_ready_update(i, hsic_updated);
 			pr_debug("diag: wake up logging process\n");
 			wake_up_interruptible(&driver->wait_q);
 		} else
@@ -529,9 +641,10 @@ static void diag_update_pkt_buffer(unsigned char *buf)
 	unsigned char *temp = buf;
 
 	mutex_lock(&driver->diagchar_mutex);
-	if (CHK_OVERFLOW(ptr, ptr, ptr + PKT_SIZE, driver->pkt_length))
+	if (CHK_OVERFLOW(ptr, ptr, ptr + PKT_SIZE, driver->pkt_length)) {
 		memcpy(ptr, temp , driver->pkt_length);
-	else
+		driver->in_busy_pktdata = 1;
+	} else
 		printk(KERN_CRIT " Not enough buffer space for PKT_RESP\n");
 	mutex_unlock(&driver->diagchar_mutex);
 }
@@ -588,8 +701,12 @@ void diag_send_data(struct diag_master_table entry, unsigned char *buf,
 						diag_check_mode_reset(buf)) {
 						return;
 					}
+					mutex_lock(&driver->smd_data[index].
+								smd_ch_mutex);
 					smd_write(driver->smd_data[index].ch,
 							buf, len);
+					mutex_unlock(&driver->smd_data[index].
+								smd_ch_mutex);
 				} else {
 					pr_err("diag: In %s, smd channel %d not open\n",
 						__func__, index);
@@ -602,20 +719,22 @@ void diag_send_data(struct diag_master_table entry, unsigned char *buf,
 	}
 }
 
-static int diag_process_apps_pkt(unsigned char *buf, int len)
+int diag_process_apps_pkt(unsigned char *buf, int len)
 {
 	uint16_t subsys_cmd_code;
 	int subsys_id, ssid_first, ssid_last, ssid_range;
 	int packet_type = 1, i, cmd_code;
 	unsigned char *temp = buf;
 	int data_type;
+	int mask_ret;
 #if defined(CONFIG_DIAG_OVER_USB)
 	unsigned char *ptr;
 #endif
 
 	/* Check if the command is a supported mask command */
-	if (diag_process_apps_masks(buf, len) == 0)
-		return 0;
+	mask_ret = diag_process_apps_masks(buf, len);
+	if (mask_ret <= 0)
+		return mask_ret;
 
 	/* Check for registered clients and forward packet to apropriate proc */
 	cmd_code = (int)(*(char *)buf);
@@ -978,6 +1097,9 @@ void diag_process_hdlc(void *data, unsigned len)
 {
 	struct diag_hdlc_decode_type hdlc;
 	int ret, type = 0;
+
+	mutex_lock(&driver->diag_hdlc_mutex);
+
 	pr_debug("diag: HDLC decode fn, len of data  %d\n", len);
 	hdlc.dest_ptr = driver->hdlc_buf;
 	hdlc.dest_size = USB_MAX_OUT_BUF;
@@ -989,10 +1111,27 @@ void diag_process_hdlc(void *data, unsigned len)
 
 	ret = diag_hdlc_decode(&hdlc);
 
-	if (ret)
+	/*
+	 * If the message is 3 bytes or less in length then the message is
+	 * too short. A message will need 4 bytes minimum, since there are
+	 * 2 bytes for the CRC and 1 byte for the ending 0x7e for the hdlc
+	 * encoding
+	 */
+	if (hdlc.dest_idx < 4) {
+		pr_err_ratelimited("diag: In %s, message is too short, len: %d, dest len: %d\n",
+			__func__, len, hdlc.dest_idx);
+		mutex_unlock(&driver->diag_hdlc_mutex);
+		return;
+	}
+
+	if (ret) {
 		type = diag_process_apps_pkt(driver->hdlc_buf,
 							  hdlc.dest_idx - 3);
-	else if (driver->debug_flag) {
+		if (type < 0) {
+			mutex_unlock(&driver->diag_hdlc_mutex);
+			return;
+		}
+	} else if (driver->debug_flag) {
 		printk(KERN_ERR "Packet dropped due to bad HDLC coding/CRC"
 				" errors or partial packet received, packet"
 				" length = %d\n", len);
@@ -1010,10 +1149,15 @@ void diag_process_hdlc(void *data, unsigned len)
 		if (chk_apps_only()) {
 			diag_send_error_rsp(hdlc.dest_idx);
 		} else { /* APQ 8060, Let Q6 respond */
-			if (driver->smd_data[LPASS_DATA].ch)
+			if (driver->smd_data[LPASS_DATA].ch) {
+				mutex_lock(&driver->smd_data[LPASS_DATA].
+								smd_ch_mutex);
 				smd_write(driver->smd_data[LPASS_DATA].ch,
 						driver->hdlc_buf,
 						hdlc.dest_idx - 3);
+				mutex_unlock(&driver->smd_data[LPASS_DATA].
+								smd_ch_mutex);
+			}
 		}
 		type = 0;
 	}
@@ -1028,8 +1172,10 @@ void diag_process_hdlc(void *data, unsigned len)
 	if ((driver->smd_data[MODEM_DATA].ch) && (ret) && (type) &&
 						(hdlc.dest_idx > 3)) {
 		APPEND_DEBUG('g');
+		mutex_lock(&driver->smd_data[MODEM_DATA].smd_ch_mutex);
 		smd_write(driver->smd_data[MODEM_DATA].ch,
 					driver->hdlc_buf, hdlc.dest_idx - 3);
+		mutex_unlock(&driver->smd_data[MODEM_DATA].smd_ch_mutex);
 		APPEND_DEBUG('h');
 #ifdef DIAG_DEBUG
 		printk(KERN_INFO "writing data to SMD, pkt length %d\n", len);
@@ -1037,6 +1183,7 @@ void diag_process_hdlc(void *data, unsigned len)
 			       1, DUMP_PREFIX_ADDRESS, data, len, 1);
 #endif /* DIAG DEBUG */
 	}
+	mutex_unlock(&driver->diag_hdlc_mutex);
 }
 
 #ifdef CONFIG_DIAG_OVER_USB
@@ -1264,6 +1411,9 @@ void diag_smd_notify(void *ctxt, unsigned event)
 			diag_dci_notify_client(smd_info->peripheral_mask,
 							DIAG_STATUS_OPEN);
 		}
+	} else if (event == SMD_EVENT_DATA && !driver->real_time_mode &&
+					smd_info->type == SMD_DATA_TYPE) {
+		process_lock_on_notify(&smd_info->nrt_lock);
 	}
 
 	wake_up(&driver->smd_wait_q);
@@ -1356,6 +1506,9 @@ static struct platform_driver diag_smd_lite_driver = {
 
 void diag_smd_destructor(struct diag_smd_info *smd_info)
 {
+	if (smd_info->type == SMD_DATA_TYPE)
+		wake_lock_destroy(&smd_info->nrt_lock.read_lock);
+
 	if (smd_info->ch)
 		smd_close(smd_info->ch);
 
@@ -1372,6 +1525,7 @@ int diag_smd_constructor(struct diag_smd_info *smd_info, int peripheral,
 {
 	smd_info->peripheral = peripheral;
 	smd_info->type = type;
+	mutex_init(&smd_info->smd_ch_mutex);
 
 	switch (peripheral) {
 	case MODEM_DATA:
@@ -1466,6 +1620,30 @@ int diag_smd_constructor(struct diag_smd_info *smd_info, int peripheral,
 		goto err;
 	}
 
+	smd_info->nrt_lock.enabled = 0;
+	smd_info->nrt_lock.ref_count = 0;
+	smd_info->nrt_lock.copy_count = 0;
+	if (type == SMD_DATA_TYPE) {
+		spin_lock_init(&smd_info->nrt_lock.read_spinlock);
+
+		switch (peripheral) {
+		case MODEM_DATA:
+			wake_lock_init(&smd_info->nrt_lock.read_lock,
+				WAKE_LOCK_SUSPEND, "diag_nrt_modem_read");
+			break;
+		case LPASS_DATA:
+			wake_lock_init(&smd_info->nrt_lock.read_lock,
+				WAKE_LOCK_SUSPEND, "diag_nrt_lpass_read");
+			break;
+		case WCNSS_DATA:
+			wake_lock_init(&smd_info->nrt_lock.read_lock,
+				WAKE_LOCK_SUSPEND, "diag_nrt_wcnss_read");
+			break;
+		default:
+			break;
+		}
+	}
+
 	return 1;
 err:
 	kfree(smd_info->buf_in_1);
@@ -1486,6 +1664,8 @@ void diagfwd_init(void)
 	diag_debug_buf_idx = 0;
 	driver->read_len_legacy = 0;
 	driver->use_device_tree = has_device_tree();
+	driver->real_time_mode = 1;
+	mutex_init(&driver->diag_hdlc_mutex);
 	mutex_init(&driver->diag_cntl_mutex);
 
 	success = diag_smd_constructor(&driver->smd_data[MODEM_DATA],

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,6 +27,7 @@
 #include <net/sock.h>
 
 #include "ipc_router.h"
+#include "msm_ipc_router_security.h"
 
 #define msm_ipc_sk(sk) ((struct msm_ipc_sock *)(sk))
 #define msm_ipc_sk_port(sk) ((struct msm_ipc_port *)(msm_ipc_sk(sk)->port))
@@ -198,6 +199,7 @@ static int msm_ipc_router_create(struct net *net,
 		return -ENOMEM;
 	}
 
+	port_ptr->check_send_permissions = msm_ipc_check_send_permissions;
 	sock->ops = &msm_ipc_proto_ops;
 	sock_init_data(sock, sk);
 	sk->sk_rcvtimeo = DEFAULT_RCV_TIMEO;
@@ -219,6 +221,12 @@ int msm_ipc_router_bind(struct socket *sock, struct sockaddr *uaddr,
 
 	if (!sk)
 		return -EINVAL;
+
+	if (!check_permissions()) {
+		pr_err("%s: %s Do not have permissions\n",
+			__func__, current->comm);
+		return -EPERM;
+	}
 
 	if (!uaddr_len) {
 		pr_err("%s: Invalid address length\n", __func__);
@@ -272,6 +280,9 @@ static int msm_ipc_router_sendmsg(struct kiocb *iocb, struct socket *sock,
 		ret = -ENOMEM;
 		goto out_sendmsg;
 	}
+
+	if (port_ptr->type == CLIENT_PORT)
+		wait_for_irsc_completion();
 
 	ret = msm_ipc_router_send_to(port_ptr, msg, &dest->address);
 	if (ret == (IPC_ROUTER_HDR_SIZE + total_len))
@@ -457,6 +468,12 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 
 	case IPC_ROUTER_IOCTL_BIND_CONTROL_PORT:
 		ret = msm_ipc_router_bind_control_port(port_ptr);
+		break;
+
+	case IPC_ROUTER_IOCTL_CONFIG_SEC_RULES:
+		ret = msm_ipc_config_sec_rules((void *)arg);
+		if (ret != -EPERM)
+			port_ptr->type = IRSC_PORT;
 		break;
 
 	default:

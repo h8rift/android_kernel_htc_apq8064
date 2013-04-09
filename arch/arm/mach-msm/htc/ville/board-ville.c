@@ -665,11 +665,6 @@ static void __init ville_reserve(void)
 	msm_reserve();
 	//	fmem_pdata.phys = reserve_memory_for_fmem(fmem_pdata.size);
 }
-static int msm8960_change_memory_power(u64 start, u64 size,
-	int change_type)
-{
-	return soc_change_memory_power(start, size, change_type);
-}
 
 #ifdef CONFIG_CPU_FREQ_GOV_ONDEMAND_2_PHASE
 int set_two_phase_freq(int cpufreq);
@@ -3226,7 +3221,6 @@ static void __init ville_init(void)
 		ARRAY_SIZE(msm_slim_devices));
 	/* msm8960_init_dsps(); */
 	//	msm_pm_set_rpm_wakeup_irq(RPM_APCC_CPU0_WAKE_UP_IRQ);
-	change_memory_power = &msm8960_change_memory_power;
         //	create_proc_read_entry("emmc", 0, NULL, emmc_partition_read_proc, NULL);
 	//	create_proc_read_entry("dying_processes", 0, NULL, dying_processors_read_proc, NULL);
 

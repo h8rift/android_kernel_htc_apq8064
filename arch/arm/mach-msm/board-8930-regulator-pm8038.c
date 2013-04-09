@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,6 +35,7 @@ VREG_CONSUMERS(L2) = {
 	REGULATOR_SUPPLY("8038_l2",		NULL),
 	REGULATOR_SUPPLY("iris_vdddig",		"wcnss_wlan.0"),
 	REGULATOR_SUPPLY("dsi_vdda",		"mipi_dsi.1"),
+	REGULATOR_SUPPLY("dsi_pll_vdda",	"mdp.0"),
 	REGULATOR_SUPPLY("mipi_csi_vdd",	"msm_csid.0"),
 	REGULATOR_SUPPLY("mipi_csi_vdd",	"msm_csid.1"),
 	REGULATOR_SUPPLY("mipi_csi_vdd",	"msm_csid.2"),
@@ -67,6 +68,7 @@ VREG_CONSUMERS(L9) = {
 	REGULATOR_SUPPLY("8038_l9",		NULL),
 	REGULATOR_SUPPLY("vdd_ana",		"3-004a"),
 	REGULATOR_SUPPLY("vdd",			"3-0024"),
+	REGULATOR_SUPPLY("vdd",			"3-0020"),
 	REGULATOR_SUPPLY("cam_vana",		"4-001a"),
 	REGULATOR_SUPPLY("cam_vana",		"4-006c"),
 	REGULATOR_SUPPLY("cam_vana",		"4-0048"),
@@ -75,8 +77,22 @@ VREG_CONSUMERS(L9) = {
 	REGULATOR_SUPPLY("cam_vaf",		"4-0048"),
 	REGULATOR_SUPPLY("cam_vana",            "4-0020"),
 	REGULATOR_SUPPLY("cam_vaf",             "4-0020"),
+/* Regulators for 8930 QRD SGLTE EVT */
+	REGULATOR_SUPPLY("cam_vana",		"8-001a"),
+	REGULATOR_SUPPLY("cam_vana",		"8-006c"),
+	REGULATOR_SUPPLY("cam_vana",		"8-0048"),
+	REGULATOR_SUPPLY("cam_vana",		"8-0020"),
+	REGULATOR_SUPPLY("cam_vana",		"8-0036"),
+	REGULATOR_SUPPLY("cam_vana",		"8-0010"),
+	REGULATOR_SUPPLY("cam_vaf",		"8-001a"),
+	REGULATOR_SUPPLY("cam_vaf",		"8-006c"),
+	REGULATOR_SUPPLY("cam_vaf",		"8-0048"),
+	REGULATOR_SUPPLY("cam_vaf",		"8-0020"),
+	REGULATOR_SUPPLY("cam_vaf",		"8-0036"),
+	REGULATOR_SUPPLY("cam_vaf",		"8-0010"),
 	REGULATOR_SUPPLY("vdd",			"12-0018"),
 	REGULATOR_SUPPLY("vdd",			"12-0068"),
+	REGULATOR_SUPPLY("CDC_VDDA_A_L9_2P85V",	"sitar1p1-slim"),
 };
 VREG_CONSUMERS(L10) = {
 	REGULATOR_SUPPLY("8038_l10",		NULL),
@@ -102,7 +118,14 @@ VREG_CONSUMERS(L12) = {
 	REGULATOR_SUPPLY("cam_vdig",		"4-001a"),
 	REGULATOR_SUPPLY("cam_vdig",		"4-006c"),
 	REGULATOR_SUPPLY("cam_vdig",		"4-0048"),
-	REGULATOR_SUPPLY("cam_vdig",            "4-0020"),
+	REGULATOR_SUPPLY("cam_vdig",		"4-0020"),
+/* Regulators for 8930 QRD SGLTE EVT */
+	REGULATOR_SUPPLY("cam_vdig",		"8-001a"),
+	REGULATOR_SUPPLY("cam_vdig",		"8-006c"),
+	REGULATOR_SUPPLY("cam_vdig",		"8-0048"),
+	REGULATOR_SUPPLY("cam_vdig",		"8-0020"),
+	REGULATOR_SUPPLY("cam_vdig",		"8-0036"),
+	REGULATOR_SUPPLY("cam_vdig",		"8-0010"),
 };
 VREG_CONSUMERS(L13) = {
 	REGULATOR_SUPPLY("8038_l13",		NULL),
@@ -146,6 +169,7 @@ VREG_CONSUMERS(L22) = {
 VREG_CONSUMERS(L23) = {
 	REGULATOR_SUPPLY("8038_l23",		NULL),
 	REGULATOR_SUPPLY("dsi_vddio",		"mipi_dsi.1"),
+	REGULATOR_SUPPLY("dsi_pll_vddio",	"mdp.0"),
 	REGULATOR_SUPPLY("hdmi_avdd",		"hdmi_msm.0"),
 	REGULATOR_SUPPLY("hdmi_vcc",		"hdmi_msm.0"),
 	REGULATOR_SUPPLY("pll_vdd",		"pil_riva"),
@@ -200,12 +224,20 @@ VREG_CONSUMERS(LVS1) = {
 	REGULATOR_SUPPLY("cam_vio",		"4-001a"),
 	REGULATOR_SUPPLY("cam_vio",		"4-006c"),
 	REGULATOR_SUPPLY("cam_vio",		"4-0048"),
-	REGULATOR_SUPPLY("cam_vio",             "4-0020"),
+	REGULATOR_SUPPLY("cam_vio",		"4-0020"),
+/* Regulators for 8930 QRD SGLTE EVT */
+	REGULATOR_SUPPLY("cam_vio",		"8-001a"),
+	REGULATOR_SUPPLY("cam_vio",		"8-006c"),
+	REGULATOR_SUPPLY("cam_vio",		"8-0048"),
+	REGULATOR_SUPPLY("cam_vio",		"8-0020"),
+	REGULATOR_SUPPLY("cam_vio",		"8-0036"),
+	REGULATOR_SUPPLY("cam_vio",		"8-0010"),
 };
 VREG_CONSUMERS(LVS2) = {
 	REGULATOR_SUPPLY("8038_lvs2",		NULL),
 	REGULATOR_SUPPLY("vcc_i2c",		"3-004a"),
 	REGULATOR_SUPPLY("vcc_i2c",		"3-0024"),
+	REGULATOR_SUPPLY("vcc_i2c",		"3-0020"),
 	REGULATOR_SUPPLY("vcc_i2c",		"0-0048"),
 	REGULATOR_SUPPLY("vddio",		"12-0018"),
 	REGULATOR_SUPPLY("vlogic",		"12-0068"),
@@ -504,7 +536,7 @@ msm8930_rpm_regulator_init_data[] __devinitdata = {
 	RPM_LDO(L9,	 0, 1, 0, 2850000, 2850000, NULL,      0, 0),
 	RPM_LDO(L10,	 0, 1, 0, 2900000, 2900000, NULL,      0, 0),
 	RPM_LDO(L11,	 1, 1, 0, 1800000, 1800000, "8038_s4", 10000, 10000),
-	RPM_LDO(L12,	 0, 1, 0, 1200000, 1200000, "8038_s2", 0, 0),
+	RPM_LDO(L12,	 0, 1, 0, 1200000, 1500000, "8038_s2", 0, 0),
 	RPM_LDO(L13,	 0, 0, 0, 2220000, 2220000, NULL,      0, 0),
 	RPM_LDO(L14,	 0, 1, 0, 1800000, 1800000, NULL,      0, 0),
 	RPM_LDO(L15,	 0, 1, 0, 1800000, 2950000, NULL,      0, 0),

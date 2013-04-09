@@ -24,7 +24,6 @@ struct mdp_instance {
 	u32 width;
 	bool secure;
 	bool uses_iommu_split_domain;
-	struct switch_dev sdev;
 };
 
 int mdp_init(struct v4l2_subdev *sd, u32 val)
@@ -56,13 +55,7 @@ int mdp_open(struct v4l2_subdev *sd, void *arg)
 		rc = -ENODEV;
 		goto mdp_open_fail;
 	}
-	inst->sdev.name = "wfd";
-	/* Register wfd node to switch driver */
-	rc = switch_dev_register(&inst->sdev);
-	if (rc) {
-		WFD_MSG_ERR("WFD switch registration failed\n");
-		goto mdp_open_fail;
-	}
+
 	msm_fb_writeback_init(fbi);
 	inst->mdp = fbi;
 	inst->secure = mops->secure;
@@ -92,8 +85,6 @@ int mdp_start(struct v4l2_subdev *sd, void *arg)
 			rc = -ENODEV;
 			goto exit;
 		}
-		switch_set_state(&inst->sdev, true);
-		WFD_MSG_DBG("wfd state switched to %d\n", inst->sdev.state);
 	}
 exit:
 	return rc;
@@ -110,8 +101,6 @@ int mdp_stop(struct v4l2_subdev *sd, void *arg)
 			return rc;
 		}
 		fbi = (struct fb_info *)inst->mdp;
-		switch_set_state(&inst->sdev, false);
-		WFD_MSG_DBG("wfd state switched to %d\n", inst->sdev.state);
 	}
 	return 0;
 }
@@ -122,8 +111,6 @@ int mdp_close(struct v4l2_subdev *sd, void *arg)
 	if (inst) {
 		fbi = (struct fb_info *)inst->mdp;
 		msm_fb_writeback_terminate(fbi);
-		/* Unregister wfd node from switch driver */
-		switch_dev_unregister(&inst->sdev);
 		kfree(inst);
 	}
 	return 0;
@@ -215,9 +202,12 @@ int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 	if (inst->uses_iommu_split_domain) {
 		if (inst->secure)
 			use_iommu = false;
-		else
+		else {
+			use_iommu = true;
 			domain = DISPLAY_WRITE_DOMAIN;
+		}
 	} else {
+		use_iommu = true;
 		domain = DISPLAY_READ_DOMAIN;
 	}
 
@@ -240,7 +230,7 @@ int mdp_munmap(struct v4l2_subdev *sd, void *arg)
 {
 	struct mem_region_map *mmap = arg;
 	struct mem_region *mregion;
-	bool use_iommu = false;
+	bool use_iommu = true;
 	int domain = -1;
 	struct mdp_instance *inst = NULL;
 
@@ -255,9 +245,12 @@ int mdp_munmap(struct v4l2_subdev *sd, void *arg)
 	if (inst->uses_iommu_split_domain) {
 		if (inst->secure)
 			use_iommu = false;
-		else
+		else {
+			use_iommu = true;
 			domain = DISPLAY_WRITE_DOMAIN;
+		}
 	} else {
+		use_iommu = true;
 		domain = DISPLAY_READ_DOMAIN;
 	}
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2013 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -74,6 +74,7 @@ static int msm8960_slim_0_tx_ch = 1;
 static int msm8960_btsco_rate = SAMPLE_RATE_8KHZ;
 static int msm8960_btsco_ch = 1;
 static int hdmi_rate_variable;
+static int msm_hdmi_rx_ch = 2;
 static int msm8960_auxpcm_rate = SAMPLE_RATE_8KHZ;
 
 static struct clk *codec_clk;
@@ -549,6 +550,8 @@ static const struct snd_soc_dapm_route common_audio_map[] = {
 static const char *spk_function[] = {"Off", "On"};
 static const char *slim0_rx_ch_text[] = {"One", "Two"};
 static const char *slim0_tx_ch_text[] = {"One", "Two", "Three", "Four"};
+static char const *hdmi_rx_ch_text[] = {"Two", "Three", "Four", "Five",
+					"Six", "Seven", "Eight"};
 static const char * const hdmi_rate[] = {"Default", "Variable"};
 
 static const struct soc_enum msm8960_enum[] = {
@@ -556,6 +559,7 @@ static const struct soc_enum msm8960_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, slim0_rx_ch_text),
 	SOC_ENUM_SINGLE_EXT(4, slim0_tx_ch_text),
 	SOC_ENUM_SINGLE_EXT(2, hdmi_rate),
+	SOC_ENUM_SINGLE_EXT(7, hdmi_rx_ch_text),
 };
 
 static const char *btsco_rate_text[] = {"8000", "16000"};
@@ -662,6 +666,25 @@ static int msm8960_auxpcm_rate_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int msm_hdmi_rx_ch_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("%s: msm_hdmi_rx_ch  = %d\n", __func__,
+			msm_hdmi_rx_ch);
+	ucontrol->value.integer.value[0] = msm_hdmi_rx_ch - 2;
+	return 0;
+}
+
+static int msm_hdmi_rx_ch_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	msm_hdmi_rx_ch = ucontrol->value.integer.value[0] + 2;
+
+	pr_debug("%s: msm_hdmi_rx_ch = %d\n", __func__,
+		msm_hdmi_rx_ch);
+	return 1;
+}
+
 static int msm8960_hdmi_rate_put(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
@@ -691,6 +714,8 @@ static const struct snd_kcontrol_new tabla_msm8960_controls[] = {
 	SOC_ENUM_EXT("HDMI RX Rate", msm8960_enum[3],
 					msm8960_hdmi_rate_get,
 					msm8960_hdmi_rate_put),
+	SOC_ENUM_EXT("HDMI_RX Channels", msm8960_enum[4],
+		msm_hdmi_rx_ch_get, msm_hdmi_rx_ch_put),
 };
 
 static void *def_tabla_mbhc_cal(void)
@@ -742,21 +767,21 @@ static void *def_tabla_mbhc_cal(void)
 	btn_low = tabla_mbhc_cal_btn_det_mp(btn_cfg, TABLA_BTN_DET_V_BTN_LOW);
 	btn_high = tabla_mbhc_cal_btn_det_mp(btn_cfg, TABLA_BTN_DET_V_BTN_HIGH);
 	btn_low[0] = -50;
-	btn_high[0] = 10;
-	btn_low[1] = 11;
-	btn_high[1] = 52;
-	btn_low[2] = 53;
-	btn_high[2] = 94;
-	btn_low[3] = 95;
-	btn_high[3] = 133;
-	btn_low[4] = 134;
-	btn_high[4] = 171;
-	btn_low[5] = 172;
-	btn_high[5] = 208;
-	btn_low[6] = 209;
-	btn_high[6] = 244;
-	btn_low[7] = 245;
-	btn_high[7] = 330;
+	btn_high[0] = 21;
+	btn_low[1] = 22;
+	btn_high[1] = 67;
+	btn_low[2] = 68;
+	btn_high[2] = 111;
+	btn_low[3] = 112;
+	btn_high[3] = 153;
+	btn_low[4] = 154;
+	btn_high[4] = 191;
+	btn_low[5] = 192;
+	btn_high[5] = 233;
+	btn_low[6] = 234;
+	btn_high[6] = 272;
+	btn_low[7] = 273;
+	btn_high[7] = 400;
 	n_ready = tabla_mbhc_cal_btn_det_mp(btn_cfg, TABLA_BTN_DET_N_READY);
 	n_ready[0] = 80;
 	n_ready[1] = 68;
@@ -1038,10 +1063,11 @@ static int msm8960_hdmi_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	pr_debug("%s channels->min %u channels->max %u ()\n", __func__,
 			channels->min, channels->max);
 
-	if (channels->max < 2)
-		channels->min = channels->max = 2;
 	if (!hdmi_rate_variable)
 		rate->min = rate->max = 48000;
+	channels->min = channels->max = msm_hdmi_rx_ch;
+	if (channels->max < 2)
+		channels->min = channels->max = 2;
 
 	return 0;
 }
@@ -1371,9 +1397,9 @@ static struct snd_soc_dai_link msm8960_dai_common[] = {
 		.be_id = MSM_FRONTEND_DAI_VOLTE,
 	},
 	{
-		.name = "SGLTE",
-		.stream_name = "SGLTE",
-		.cpu_dai_name   = "SGLTE",
+		.name = "Voice2",
+		.stream_name = "Voice2",
+		.cpu_dai_name   = "Voice2",
 		.platform_name  = "msm-pcm-voice",
 		.dynamic = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
@@ -1383,7 +1409,7 @@ static struct snd_soc_dai_link msm8960_dai_common[] = {
 		.ignore_pmdown_time = 1,/* this dainlink has playback support */
 		.codec_dai_name = "snd-soc-dummy-dai",
 		.codec_name = "snd-soc-dummy",
-		.be_id = MSM_FRONTEND_DAI_SGLTE,
+		.be_id = MSM_FRONTEND_DAI_VOICE2,
 	},
 	{
 		.name = "MSM8960 LowLatency",

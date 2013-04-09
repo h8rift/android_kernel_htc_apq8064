@@ -377,12 +377,12 @@ static u32 ddl_decoder_seq_done_callback(struct ddl_context *ddl_context,
 				input_vcd_frm->data_len <=
 				seq_hdr_info.dec_frm_size) {
 				seq_hdr_only_frame = true;
-				input_vcd_frm->offset +=
-					seq_hdr_info.dec_frm_size;
-				input_vcd_frm->data_len = 0;
 				eos_present =
 				input_vcd_frm->flags & VCD_FRAME_FLAG_EOS;
 				if (!eos_present) {
+					input_vcd_frm->data_len = 0;
+					input_vcd_frm->offset +=
+						seq_hdr_info.dec_frm_size;
 					input_vcd_frm->flags |=
 						VCD_FRAME_FLAG_CODECCONFIG;
 					ddl->input_frame.frm_trans_end =
@@ -408,6 +408,10 @@ static u32 ddl_decoder_seq_done_callback(struct ddl_context *ddl_context,
 						seq_hdr_info.dec_frm_size);
 				}
 			}
+			DDL_MSG_INFO("profile %u level %u progressive %u",
+					decoder->profile.profile,
+					decoder->level.level,
+					decoder->progressive_only);
 			if (need_reconfig) {
 				struct ddl_frame_data_tag *payload =
 					&ddl->input_frame;
@@ -995,7 +999,7 @@ static u32 ddl_process_intr_status(struct ddl_context *ddl_context,
 		ddl_encoder_eos_done(ddl_context);
 	break;
 	case VIDC_1080P_RISC2HOST_CMD_ERROR_RET:
-		DDL_MSG_ERROR("CMD_ERROR_INTR");
+		DDL_MSG_HIGH("CMD_ERROR_INTR");
 		return_status = ddl_handle_core_errors(ddl_context);
 	break;
 	case VIDC_1080P_RISC2HOST_CMD_INIT_BUFFERS_RET:

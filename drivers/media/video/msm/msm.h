@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -359,6 +359,7 @@ struct msm_cam_v4l2_dev_inst {
 	int vbqueue_initialized;
 	struct mutex inst_lock;
 	uint32_t inst_handle;
+	uint32_t sequence;
 };
 
 struct msm_cam_mctl_node {

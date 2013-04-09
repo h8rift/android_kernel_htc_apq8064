@@ -41,11 +41,15 @@
 #include <mach/dma.h>
 #include <mach/msm_tspp.h>
 #include <linux/debugfs.h>
+#include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/string.h>
 
 /*
  * General defines
  */
 #define TSPP_TSIF_INSTANCES            2
+#define TSPP_GPIOS_PER_TSIF            4
 #define TSPP_FILTER_TABLES             3
 #define TSPP_MAX_DEVICES               1
 #define TSPP_NUM_CHANNELS              16
@@ -647,45 +651,26 @@ static void tspp_sps_complete_tlet(unsigned long data)
 }
 
 /*** GPIO functions ***/
-static void tspp_gpios_free(const struct msm_gpio *table, int size)
-{
-	int i;
-	const struct msm_gpio *g;
-	for (i = size-1; i >= 0; i--) {
-		g = table + i;
-		gpio_free(GPIO_PIN(g->gpio_cfg));
-	}
-}
-
-static int tspp_gpios_request(const struct msm_gpio *table, int size)
-{
-	int rc;
-	int i;
-	const struct msm_gpio *g;
-	for (i = 0; i < size; i++) {
-		g = table + i;
-		rc = gpio_request(GPIO_PIN(g->gpio_cfg), g->label);
-		if (rc) {
-			pr_err("tspp: gpio_request(%d) <%s> failed: %d\n",
-			       GPIO_PIN(g->gpio_cfg), g->label ?: "?", rc);
-			goto err;
-		}
-	}
-	return 0;
-err:
-	tspp_gpios_free(table, i);
-	return rc;
-}
-
-static int tspp_gpios_disable(const struct msm_gpio *table, int size)
+static int tspp_gpios_disable(const struct tspp_tsif_device *tsif_device,
+				const struct msm_gpio *table,
+				int size)
 {
 	int rc = 0;
 	int i;
 	const struct msm_gpio *g;
+
 	for (i = size-1; i >= 0; i--) {
 		int tmp;
 		g = table + i;
-		tmp = gpio_tlmm_config(g->gpio_cfg, GPIO_CFG_DISABLE);
+
+		/* don't use sync GPIO when not working in mode 2 */
+		if ((tsif_device->mode != TSPP_TSIF_MODE_2) &&
+			(strnstr(g->label, "sync", strlen(g->label)) != NULL))
+			continue;
+
+		tmp = gpio_tlmm_config(GPIO_CFG(GPIO_PIN(g->gpio_cfg),
+			0, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
+			GPIO_CFG_DISABLE);
 		if (tmp) {
 			pr_err("tspp_gpios_disable(0x%08x, GPIO_CFG_DISABLE) <%s> failed: %d\n",
 			       g->gpio_cfg, g->label ?: "?", rc);
@@ -701,13 +686,22 @@ static int tspp_gpios_disable(const struct msm_gpio *table, int size)
 	return rc;
 }
 
-static int tspp_gpios_enable(const struct msm_gpio *table, int size)
+static int tspp_gpios_enable(const struct tspp_tsif_device *tsif_device,
+				const struct msm_gpio *table,
+				int size)
 {
 	int rc;
 	int i;
 	const struct msm_gpio *g;
+
 	for (i = 0; i < size; i++) {
 		g = table + i;
+
+		/* don't use sync GPIO when not working in mode 2 */
+		if ((tsif_device->mode != TSPP_TSIF_MODE_2) &&
+			(strnstr(g->label, "sync", strlen(g->label)) != NULL))
+			continue;
+
 		rc = gpio_tlmm_config(g->gpio_cfg, GPIO_CFG_ENABLE);
 		if (rc) {
 			pr_err("tspp: gpio_tlmm_config(0x%08x, GPIO_CFG_ENABLE) <%s> failed: %d\n",
@@ -721,44 +715,59 @@ static int tspp_gpios_enable(const struct msm_gpio *table, int size)
 	}
 	return 0;
 err:
-	tspp_gpios_disable(table, i);
+	tspp_gpios_disable(tsif_device, table, i);
+
 	return rc;
 }
 
-static int tspp_gpios_request_enable(const struct msm_gpio *table, int size)
-{
-	int rc = tspp_gpios_request(table, size);
-	if (rc)
-		return rc;
-	rc = tspp_gpios_enable(table, size);
-	if (rc)
-		tspp_gpios_free(table, size);
-	return rc;
-}
 
-static void tspp_gpios_disable_free(const struct msm_gpio *table, int size)
+static int tspp_config_gpios(struct tspp_device *device,
+				enum tspp_source source,
+				int enable)
 {
-	tspp_gpios_disable(table, size);
-	tspp_gpios_free(table, size);
-}
+	const struct msm_gpio *table;
+	struct msm_tspp_platform_data *pdata = device->pdev->dev.platform_data;
+	int num_gpios = (pdata->num_gpios / TSPP_TSIF_INSTANCES);
+	int i = 0;
 
-static int tspp_start_gpios(struct tspp_device *device)
-{
-	struct msm_tspp_platform_data *pdata =
-		device->pdev->dev.platform_data;
-	return tspp_gpios_request_enable(pdata->gpios, pdata->num_gpios);
-}
+	if (num_gpios != TSPP_GPIOS_PER_TSIF) {
+		pr_err("tspp %s: unexpected number of GPIOs %d, expected %d\n",
+			__func__, num_gpios, TSPP_GPIOS_PER_TSIF);
+		return -EINVAL;
+	}
 
-static void tspp_stop_gpios(struct tspp_device *device)
-{
-	struct msm_tspp_platform_data *pdata =
-		device->pdev->dev.platform_data;
-	tspp_gpios_disable_free(pdata->gpios, pdata->num_gpios);
+	/*
+	 * Note: this code assumes that the GPIO definitions in the
+	 * pdata->gpios table are according to the TSIF instance number,
+	 * i.e., that TSIF0 GPIOs are defined first, then TSIF1 GPIOs etc.
+	 */
+	switch (source) {
+	case TSPP_SOURCE_TSIF0:
+		i = 0;
+		break;
+	case TSPP_SOURCE_TSIF1:
+		i = 1;
+		break;
+	default:
+		pr_err("tspp %s: invalid source\n", __func__);
+		return -EINVAL;
+	}
+
+	table = pdata->gpios + (i * num_gpios);
+	if (enable)
+		return tspp_gpios_enable(&device->tsif[i], table, num_gpios);
+	else
+		return tspp_gpios_disable(&device->tsif[i], table, num_gpios);
 }
 
 /*** Clock functions ***/
 static int tspp_clock_start(struct tspp_device *device)
 {
+	if (device == NULL) {
+		pr_err("tspp: Can't start clocks, invalid device\n");
+		return -EINVAL;
+	}
+
 	if (device->tsif_pclk && clk_prepare_enable(device->tsif_pclk) != 0) {
 		pr_err("tspp: Can't start pclk");
 		return -EBUSY;
@@ -776,11 +785,16 @@ static int tspp_clock_start(struct tspp_device *device)
 
 static void tspp_clock_stop(struct tspp_device *device)
 {
+	if (device == NULL) {
+		pr_err("tspp: Can't stop clocks, invalid device\n");
+		return;
+	}
+
 	if (device->tsif_pclk)
-		clk_disable(device->tsif_pclk);
+		clk_disable_unprepare(device->tsif_pclk);
 
 	if (device->tsif_ref_clk)
-		clk_disable(device->tsif_ref_clk);
+		clk_disable_unprepare(device->tsif_ref_clk);
 }
 
 /*** TSIF functions ***/
@@ -1306,26 +1320,38 @@ int tspp_open_stream(u32 dev, u32 channel_id,
 
 	switch (source->source) {
 	case TSPP_SOURCE_TSIF0:
+		if (tspp_config_gpios(pdev, channel->src, 1) != 0) {
+			pr_err("tspp: error enabling tsif0 GPIOs\n");
+			return -EBUSY;
+		}
 		/* make sure TSIF0 is running & enabled */
 		if (tspp_start_tsif(&pdev->tsif[0]) != 0) {
 			pr_err("tspp: error starting tsif0");
 			return -EBUSY;
 		}
-		val = readl_relaxed(pdev->base + TSPP_CONTROL);
-		writel_relaxed(val & ~TSPP_CONTROL_TSP_TSIF0_SRC_DIS,
-			pdev->base + TSPP_CONTROL);
-		wmb();
+		if (pdev->tsif[0].ref_count == 1) {
+			val = readl_relaxed(pdev->base + TSPP_CONTROL);
+			writel_relaxed(val & ~TSPP_CONTROL_TSP_TSIF0_SRC_DIS,
+				pdev->base + TSPP_CONTROL);
+			wmb();
+		}
 		break;
 	case TSPP_SOURCE_TSIF1:
+		if (tspp_config_gpios(pdev, channel->src, 1) != 0) {
+			pr_err("tspp: error enabling tsif1 GPIOs\n");
+			return -EBUSY;
+		}
 		/* make sure TSIF1 is running & enabled */
 		if (tspp_start_tsif(&pdev->tsif[1]) != 0) {
 			pr_err("tspp: error starting tsif1");
 			return -EBUSY;
 		}
-		val = readl_relaxed(pdev->base + TSPP_CONTROL);
-		writel_relaxed(val & ~TSPP_CONTROL_TSP_TSIF1_SRC_DIS,
-			pdev->base + TSPP_CONTROL);
-		wmb();
+		if (pdev->tsif[1].ref_count == 1) {
+			val = readl_relaxed(pdev->base + TSPP_CONTROL);
+			writel_relaxed(val & ~TSPP_CONTROL_TSP_TSIF1_SRC_DIS,
+				pdev->base + TSPP_CONTROL);
+			wmb();
+		}
 		break;
 	case TSPP_SOURCE_MEM:
 		break;
@@ -1351,6 +1377,7 @@ EXPORT_SYMBOL(tspp_open_stream);
 int tspp_close_stream(u32 dev, u32 channel_id)
 {
 	u32 val;
+	u32 prev_ref_count;
 	struct tspp_device *pdev;
 	struct tspp_channel *channel;
 
@@ -1367,17 +1394,30 @@ int tspp_close_stream(u32 dev, u32 channel_id)
 
 	switch (channel->src) {
 	case TSPP_SOURCE_TSIF0:
+		prev_ref_count = pdev->tsif[0].ref_count;
 		tspp_stop_tsif(&pdev->tsif[0]);
-		val = readl_relaxed(pdev->base + TSPP_CONTROL);
-		writel_relaxed(val | TSPP_CONTROL_TSP_TSIF0_SRC_DIS,
-			pdev->base + TSPP_CONTROL);
-		wmb();
+		if (tspp_config_gpios(pdev, channel->src, 0) != 0)
+			pr_err("tspp: error disabling tsif0 GPIOs\n");
+
+		if (prev_ref_count == 1) {
+			val = readl_relaxed(pdev->base + TSPP_CONTROL);
+			writel_relaxed(val | TSPP_CONTROL_TSP_TSIF0_SRC_DIS,
+				pdev->base + TSPP_CONTROL);
+			wmb();
+		}
 		break;
 	case TSPP_SOURCE_TSIF1:
+		prev_ref_count = pdev->tsif[1].ref_count;
 		tspp_stop_tsif(&pdev->tsif[1]);
-		val = readl_relaxed(pdev->base + TSPP_CONTROL);
-		writel_relaxed(val | TSPP_CONTROL_TSP_TSIF1_SRC_DIS,
-			pdev->base + TSPP_CONTROL);
+		if (tspp_config_gpios(pdev, channel->src, 0) != 0)
+			pr_err("tspp: error disabling tsif0 GPIOs\n");
+
+		if (prev_ref_count == 1) {
+			val = readl_relaxed(pdev->base + TSPP_CONTROL);
+			writel_relaxed(val | TSPP_CONTROL_TSP_TSIF1_SRC_DIS,
+				pdev->base + TSPP_CONTROL);
+			wmb();
+		}
 		break;
 	case TSPP_SOURCE_MEM:
 		break;
@@ -1427,9 +1467,13 @@ int tspp_open_channel(u32 dev, u32 channel_id)
 	event = &channel->event;
 
 	/* start the clocks if needed */
-	tspp_clock_start(pdev);
-	if (tspp_channels_in_use(pdev) == 0)
+	if (tspp_channels_in_use(pdev) == 0) {
+		rc = tspp_clock_start(pdev);
+		if (rc)
+			return rc;
+
 		wake_lock(&pdev->wake_lock);
+	}
 
 	/* mark it as used */
 	channel->used = 1;
@@ -1525,6 +1569,7 @@ int tspp_close_channel(u32 dev, u32 channel_id)
 {
 	int i;
 	int id;
+	int table_idx;
 	u32 val;
 
 	struct sps_connect *config;
@@ -1562,22 +1607,21 @@ int tspp_close_channel(u32 dev, u32 channel_id)
 	wmb();
 
 	/* unregister all filters for this channel */
-	for (i = 0; i < TSPP_NUM_PRIORITIES; i++) {
-		struct tspp_pid_filter *tspp_filter =
-			&pdev->filters[channel->src]->filter[i];
-		id = FILTER_GET_PIPE_NUMBER0(tspp_filter);
-		if (id == channel->id) {
-			if (FILTER_HAS_ENCRYPTION(tspp_filter))
-				tspp_free_key_entry(
-					FILTER_GET_KEY_NUMBER(tspp_filter));
-			tspp_filter->config = 0;
-			tspp_filter->filter = 0;
+	for (table_idx = 0; table_idx < TSPP_FILTER_TABLES; table_idx++) {
+		for (i = 0; i < TSPP_NUM_PRIORITIES; i++) {
+			struct tspp_pid_filter *filter =
+				&pdev->filters[table_idx]->filter[i];
+			id = FILTER_GET_PIPE_NUMBER0(filter);
+			if (id == channel->id) {
+				if (FILTER_HAS_ENCRYPTION(filter))
+					tspp_free_key_entry(
+						FILTER_GET_KEY_NUMBER(filter));
+				filter->config = 0;
+				filter->filter = 0;
+			}
 		}
 	}
 	channel->filter_count = 0;
-
-	/* stop the stream */
-	tspp_close_stream(dev, channel->id);
 
 	/* disconnect the bam */
 	if (sps_disconnect(channel->pipe) != 0)
@@ -1604,9 +1648,12 @@ int tspp_close_channel(u32 dev, u32 channel_id)
 	channel->locked = NULL;
 	channel->used = 0;
 
-	if (tspp_channels_in_use(pdev) == 0)
+	if (tspp_channels_in_use(pdev) == 0) {
 		wake_unlock(&pdev->wake_lock);
-	tspp_clock_stop(pdev);
+		tspp_clock_stop(pdev);
+	}
+
+	pm_runtime_put(&pdev->pdev->dev);
 
 	return 0;
 }
@@ -2415,7 +2462,7 @@ static long tspp_ioctl(struct file *filp,
 	channel = filp->private_data;
 	dev = channel->pdev->pdev->id;
 
-	if (!param1)
+	if ((param0 != TSPP_IOCTL_CLOSE_STREAM) && !param1)
 		return -EINVAL;
 
 	switch (param0) {
@@ -2482,6 +2529,9 @@ static long tspp_ioctl(struct file *filp,
 			sizeof(struct tspp_buffer)) == 0)
 			rc = tspp_set_buffer_size(channel, &b);
 		break;
+	case TSPP_IOCTL_CLOSE_STREAM:
+		rc = tspp_close_stream(dev, channel->id);
+		break;
 	default:
 		pr_err("tspp: Unknown ioctl %i", param0);
 	}
@@ -2535,28 +2585,27 @@ static void tsif_debugfs_init(struct tspp_tsif_device *tsif_device,
 
 		debugfs_create_u32(
 			"stat_rx_chunks",
-			S_IRUGO|S_IWUGO,
+			S_IRUGO | S_IWUSR | S_IWGRP,
 			tsif_device->dent_tsif,
 			&tsif_device->stat_rx);
 
 		debugfs_create_u32(
 			"stat_overflow",
-			S_IRUGO|S_IWUGO,
+			S_IRUGO | S_IWUSR | S_IWGRP,
 			tsif_device->dent_tsif,
 			&tsif_device->stat_overflow);
 
 		debugfs_create_u32(
 			"stat_lost_sync",
-			S_IRUGO|S_IWUGO,
+			S_IRUGO | S_IWUSR | S_IWGRP,
 			tsif_device->dent_tsif,
 			&tsif_device->stat_lost_sync);
 
 		debugfs_create_u32(
 			"stat_timeout",
-			S_IRUGO|S_IWUGO,
+			S_IRUGO | S_IWUSR | S_IWGRP,
 			tsif_device->dent_tsif,
 			&tsif_device->stat_timeout);
-
 	}
 }
 
@@ -2603,6 +2652,137 @@ static void tspp_debugfs_exit(struct tspp_device *device)
 	}
 }
 
+/* copy device-tree data to platfrom data struct */
+static __devinit struct msm_tspp_platform_data *
+msm_tspp_dt_to_pdata(struct platform_device *pdev)
+{
+	struct device_node *node = pdev->dev.of_node;
+	struct msm_tspp_platform_data *data;
+	struct msm_gpio *gpios;
+	int i, rc;
+	int gpio;
+	u32 gpio_func;
+
+	/* Note: memory allocated by devm_kzalloc is freed automatically */
+	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
+	if (!data) {
+		pr_err("tspp: Unable to allocate platform data\n");
+		return NULL;
+	}
+	rc = of_property_read_string(node, "qcom,tsif-pclk", &data->tsif_pclk);
+	if (rc) {
+		pr_err("tspp: Could not find tsif-pclk property, err = %d\n",
+			rc);
+		return NULL;
+	}
+	rc = of_property_read_string(node, "qcom,tsif-ref-clk",
+			&data->tsif_ref_clk);
+	if (rc) {
+		pr_err("tspp: Could not find tsif-ref-clk property, err = %d\n",
+			rc);
+		return NULL;
+	}
+
+	data->num_gpios = of_gpio_count(node);
+	if (data->num_gpios == 0) {
+		pr_err("tspp: Could not find GPIO definitions\n");
+		return NULL;
+	}
+	gpios = devm_kzalloc(&pdev->dev,
+			(data->num_gpios * sizeof(struct msm_gpio)),
+			GFP_KERNEL);
+	if (!gpios) {
+		pr_err("tspp: Unable to allocate memory for GPIOs table\n");
+		return NULL;
+	}
+	/* Assuming GPIO FUNC property is the same for all GPIOs */
+	if (of_property_read_u32(node, "qcom,gpios-func", &gpio_func)) {
+		pr_err("tspp: Could not find gpios-func property\n");
+		return NULL;
+	}
+	for (i = 0; i < data->num_gpios; i++) {
+		gpio = of_get_gpio(node, i);
+		gpios[i].gpio_cfg = GPIO_CFG(gpio, gpio_func,
+						GPIO_CFG_INPUT,
+						GPIO_CFG_PULL_DOWN,
+						GPIO_CFG_2MA);
+		rc = of_property_read_string_index(node, "qcom,gpio-names",
+						i, &gpios[i].label);
+		if (rc)
+			pr_warn("tspp: Could not find gpio-names property\n");
+	}
+
+	data->gpios = gpios;
+
+	return data;
+}
+
+static int msm_tspp_map_irqs(struct platform_device *pdev,
+				struct tspp_device *device)
+{
+	int rc;
+	int i;
+
+	/* get IRQ numbers from platform information */
+
+	/* map TSPP IRQ */
+	rc = platform_get_irq_byname(pdev, "TSIF_TSPP_IRQ");
+	if (rc > 0) {
+		device->tspp_irq = rc;
+		rc = request_irq(device->tspp_irq, tspp_isr, IRQF_SHARED,
+				 dev_name(&pdev->dev), device);
+		if (rc) {
+			dev_err(&pdev->dev,
+				"failed to request TSPP IRQ %d : %d",
+				device->tspp_irq, rc);
+			device->tspp_irq = 0;
+			return -EINVAL;
+		}
+	} else {
+		dev_err(&pdev->dev, "failed to get TSPP IRQ");
+		return -EINVAL;
+	}
+
+	/* map TSIF IRQs */
+	rc = platform_get_irq_byname(pdev, "TSIF0_IRQ");
+	if (rc > 0) {
+		device->tsif[0].tsif_irq = rc;
+	} else {
+		dev_err(&pdev->dev, "failed to get TSIF0 IRQ");
+		return -EINVAL;
+	}
+
+	rc = platform_get_irq_byname(pdev, "TSIF1_IRQ");
+	if (rc > 0) {
+		device->tsif[1].tsif_irq = rc;
+	} else {
+		dev_err(&pdev->dev, "failed to get TSIF1 IRQ");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < TSPP_TSIF_INSTANCES; i++) {
+		rc = request_irq(device->tsif[i].tsif_irq,
+				tsif_isr, IRQF_SHARED,
+				dev_name(&pdev->dev), &device->tsif[i]);
+		if (rc) {
+			dev_warn(&pdev->dev, "failed to request TSIF%d IRQ: %d",
+				i, rc);
+			device->tsif[i].tsif_irq = 0;
+		}
+	}
+
+	/* map BAM IRQ */
+	rc = platform_get_irq_byname(pdev, "TSIF_BAM_IRQ");
+	if (rc > 0) {
+		device->bam_irq = rc;
+	} else {
+		dev_err(&pdev->dev, "failed to get TSPP BAM IRQ");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int __devinit msm_tspp_probe(struct platform_device *pdev)
 {
 	int rc = -ENODEV;
@@ -2616,8 +2796,20 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 	struct resource *mem_bam;
 	struct tspp_channel *channel;
 
-	/* must have platform data */
-	data = pdev->dev.platform_data;
+	if (pdev->dev.of_node) {
+		/* get information from device tree */
+		data = msm_tspp_dt_to_pdata(pdev);
+		/* get device ID */
+		rc = of_property_read_u32(pdev->dev.of_node,
+					"cell-index", &pdev->id);
+		if (rc)
+			pdev->id = -1;
+
+		pdev->dev.platform_data = data;
+	} else {
+		/* must have platform data */
+		data = pdev->dev.platform_data;
+	}
 	if (!data) {
 		pr_err("tspp: Platform data not available");
 		rc = -EINVAL;
@@ -2666,7 +2858,8 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 	}
 
 	/* map I/O memory */
-	mem_tsif0 = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	mem_tsif0 = platform_get_resource_byname(pdev,
+				IORESOURCE_MEM, "MSM_TSIF0_PHYS");
 	if (!mem_tsif0) {
 		pr_err("tspp: Missing tsif0 MEM resource");
 		rc = -ENXIO;
@@ -2679,7 +2872,8 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 		goto err_map_tsif0;
 	}
 
-	mem_tsif1 = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	mem_tsif1 = platform_get_resource_byname(pdev,
+				IORESOURCE_MEM, "MSM_TSIF1_PHYS");
 	if (!mem_tsif1) {
 		dev_err(&pdev->dev, "Missing tsif1 MEM resource");
 		rc = -ENXIO;
@@ -2692,7 +2886,8 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 		goto err_map_tsif1;
 	}
 
-	mem_tspp = platform_get_resource(pdev, IORESOURCE_MEM, 2);
+	mem_tspp = platform_get_resource_byname(pdev,
+				IORESOURCE_MEM, "MSM_TSPP_PHYS");
 	if (!mem_tspp) {
 		dev_err(&pdev->dev, "Missing MEM resource");
 		rc = -ENXIO;
@@ -2704,7 +2899,8 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 		goto err_map_dev;
 	}
 
-	mem_bam = platform_get_resource(pdev, IORESOURCE_MEM, 3);
+	mem_bam = platform_get_resource_byname(pdev,
+				IORESOURCE_MEM, "MSM_TSPP_BAM_PHYS");
 	if (!mem_bam) {
 		pr_err("tspp: Missing bam MEM resource");
 		rc = -ENXIO;
@@ -2719,44 +2915,8 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 		goto err_map_bam;
 	}
 
-	/* map TSPP IRQ */
-	rc = platform_get_irq(pdev, 0);
-	if (rc > 0) {
-		device->tspp_irq = rc;
-		rc = request_irq(device->tspp_irq, tspp_isr, IRQF_SHARED,
-				 dev_name(&pdev->dev), device);
-		if (rc) {
-			dev_err(&pdev->dev, "failed to request IRQ %d : %d",
-				device->tspp_irq, rc);
-			goto err_irq;
-		}
-	} else {
-		dev_err(&pdev->dev, "failed to get tspp IRQ");
+	if (msm_tspp_map_irqs(pdev, device))
 		goto err_irq;
-	}
-
-	/* map TSIF IRQs */
-	device->tsif[0].tsif_irq = TSIF1_IRQ;
-	device->tsif[1].tsif_irq = TSIF2_IRQ;
-
-	for (i = 0; i < TSPP_TSIF_INSTANCES; i++) {
-		rc = request_irq(device->tsif[i].tsif_irq,
-				tsif_isr, IRQF_SHARED,
-				dev_name(&pdev->dev), &device->tsif[i]);
-		if (rc) {
-			dev_warn(&pdev->dev, "failed to request TSIF%d IRQ: %d",
-				i, rc);
-			device->tsif[i].tsif_irq = 0;
-		}
-	}
-
-	/* BAM IRQ */
-	device->bam_irq = TSIF_BAM_IRQ;
-
-	/* GPIOs */
-	rc = tspp_start_gpios(device);
-	if (rc)
-		goto err_gpio;
 
 	/* power management */
 	pm_runtime_set_active(&pdev->dev);
@@ -2786,15 +2946,15 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 	device->bam_props.irq = device->bam_irq;
 	device->bam_props.manage = SPS_BAM_MGR_LOCAL;
 
+	if (tspp_clock_start(device) != 0) {
+		dev_err(&pdev->dev, "Can't start clocks");
+		goto err_clock;
+	}
+
 	if (sps_register_bam_device(&device->bam_props,
 		&device->bam_handle) != 0) {
 		pr_err("tspp: failed to register bam");
 		goto err_bam;
-	}
-
-	if (tspp_clock_start(device) != 0) {
-		dev_err(&pdev->dev, "Can't start clocks");
-		goto err_clock;
 	}
 
 	spin_lock_init(&device->spinlock);
@@ -2805,7 +2965,11 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 	tspp_global_reset(device);
 
 	version = readl_relaxed(device->base + TSPP_VERSION);
-	if (version != 1)
+	/*
+	 * TSPP version can be bits [7:0] or alternatively,
+	 * TSPP major version is bits [31:28].
+	 */
+	if ((version != 0x1) && (((version >> 28) & 0xF) != 0x1))
 		pr_warn("tspp: unrecognized hw version=%i", version);
 
 	/* initialize the channels */
@@ -2825,21 +2989,27 @@ static int __devinit msm_tspp_probe(struct platform_device *pdev)
 	return 0;
 
 err_channel:
-	/* uninitialize channels */
+	/* un-initialize channels */
 	for (j = 0; j < i; j++) {
 		channel = &(device->channels[i]);
 		device_destroy(tspp_class, channel->cdev.dev);
 		cdev_del(&channel->cdev);
 	}
-err_clock:
+
 	sps_deregister_bam_device(device->bam_handle);
+err_clock:
 err_bam:
 	tspp_debugfs_exit(device);
 	for (i = 0; i < TSPP_TSIF_INSTANCES; i++)
 		tsif_debugfs_exit(&device->tsif[i]);
-err_gpio:
 err_irq:
-	tspp_stop_gpios(device);
+	for (i = 0; i < TSPP_TSIF_INSTANCES; i++) {
+		if (device->tsif[i].tsif_irq)
+			free_irq(device->tsif[i].tsif_irq,  &device->tsif[i]);
+	}
+	if (device->tspp_irq)
+		free_irq(device->tspp_irq, device);
+
 	iounmap(device->bam_props.virt_addr);
 err_map_bam:
 err_res_bam:
@@ -2868,6 +3038,7 @@ static int __devexit msm_tspp_remove(struct platform_device *pdev)
 {
 	struct tspp_channel *channel;
 	u32 i;
+	int rc;
 
 	struct tspp_device *device = platform_get_drvdata(pdev);
 
@@ -2879,7 +3050,12 @@ static int __devexit msm_tspp_remove(struct platform_device *pdev)
 		cdev_del(&channel->cdev);
 	}
 
-	sps_deregister_bam_device(device->bam_handle);
+	/* de-registering BAM device requires clocks */
+	rc = tspp_clock_start(device);
+	if (rc == 0) {
+		sps_deregister_bam_device(device->bam_handle);
+		tspp_clock_stop(device);
+	}
 
 	for (i = 0; i < TSPP_TSIF_INSTANCES; i++) {
 		tsif_debugfs_exit(&device->tsif[i]);
@@ -2889,7 +3065,6 @@ static int __devexit msm_tspp_remove(struct platform_device *pdev)
 
 	wake_lock_destroy(&device->wake_lock);
 	free_irq(device->tspp_irq, device);
-	tspp_stop_gpios(device);
 
 	iounmap(device->bam_props.virt_addr);
 	iounmap(device->base);
@@ -2903,7 +3078,7 @@ static int __devexit msm_tspp_remove(struct platform_device *pdev)
 		clk_put(device->tsif_pclk);
 
 	pm_runtime_disable(&pdev->dev);
-	pm_runtime_put(&pdev->dev);
+
 	kfree(device);
 
 	return 0;
@@ -2928,12 +3103,18 @@ static const struct dev_pm_ops tspp_dev_pm_ops = {
 	.runtime_resume = tspp_runtime_resume,
 };
 
+static struct of_device_id msm_match_table[] = {
+	{.compatible = "qcom,msm_tspp"},
+	{}
+};
+
 static struct platform_driver msm_tspp_driver = {
 	.probe          = msm_tspp_probe,
 	.remove         = __exit_p(msm_tspp_remove),
 	.driver         = {
 		.name   = "msm_tspp",
 		.pm     = &tspp_dev_pm_ops,
+		.of_match_table = msm_match_table,
 	},
 };
 

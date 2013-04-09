@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -71,6 +71,7 @@
 
 #define PLATFORM_SUBTYPE_SGLTE	6
 #define PLATFORM_SUBTYPE_DSDA2	8
+#define PLATFORM_SUBTYPE_SGLTE2	9
 
 enum msm_cpu {
 	MSM_CPU_UNKNOWN = 0,

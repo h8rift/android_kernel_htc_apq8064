@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -445,7 +445,7 @@ static int msm_server_control(struct msm_cam_server_dev *server_dev,
 			break;
 		D("%s: wait_event interrupted by signal, remain_count = %d",
 			__func__, wait_count);
-	} while (wait_count > 0);
+	} while (1);
 	D("Waiting is over for config status\n");
 	if (list_empty_careful(&queue->list)) {
 		if (!rc)
@@ -1081,8 +1081,37 @@ int msm_server_v4l2_unsubscribe_event(struct v4l2_fh *fh,
 			struct v4l2_event_subscription *sub)
 {
 	int rc = 0;
+	struct v4l2_event ev;
 
 	D("%s: fh = 0x%x\n", __func__, (u32)fh);
+
+	/* Undequeue all pending events and free associated
+	 * msm_isp_event_ctrl  */
+	while (v4l2_event_pending(fh)) {
+		struct msm_isp_event_ctrl *isp_event;
+		rc = v4l2_event_dequeue(fh, &ev, O_NONBLOCK);
+		if (rc) {
+			pr_err("%s: v4l2_event_dequeue failed %d",
+						__func__, rc);
+			break;
+		}
+		isp_event = (struct msm_isp_event_ctrl *)
+			(*((uint32_t *)ev.u.data));
+		if (isp_event) {
+			if (ev.type == (V4L2_EVENT_PRIVATE_START +
+						MSM_CAM_RESP_STAT_EVT_MSG)) {
+				if (isp_event->isp_data.isp_msg.len != 0 &&
+				isp_event->isp_data.isp_msg.data != NULL) {
+					kfree(isp_event->isp_data.isp_msg.data);
+					isp_event->isp_data.isp_msg.len = 0;
+					isp_event->isp_data.isp_msg.data = NULL;
+				}
+				kfree(isp_event);
+				*((uint32_t *)ev.u.data) = 0;
+			}
+		}
+	}
+
 	rc = v4l2_event_unsubscribe(fh, sub);
 	D("%s: rc = %d\n", __func__, rc);
 	return rc;
@@ -1452,13 +1481,14 @@ static int msm_close_server(struct file *fp)
 					/*so that it isn't closed again*/
 					pmctl->mctl_release = NULL;
 				}
-				msm_cam_server_send_error_evt(pmctl,
-					V4L2_EVENT_PRIVATE_START +
-					MSM_CAM_APP_NOTIFY_ERROR_EVENT);
+				if (pmctl)
+					msm_cam_server_send_error_evt(pmctl,
+						V4L2_EVENT_PRIVATE_START +
+						MSM_CAM_APP_NOTIFY_ERROR_EVENT);
 			}
 		}
 		sub.type = V4L2_EVENT_ALL;
-		msm_server_v4l2_unsubscribe_event(
+		v4l2_event_unsubscribe(
 			&g_server_dev.server_command_queue.eventHandle, &sub);
 		mutex_unlock(&g_server_dev.server_lock);
 	}
@@ -1651,6 +1681,7 @@ static const struct v4l2_file_operations msm_fops_server = {
 
 static const struct v4l2_ioctl_ops msm_ioctl_ops_server = {
 	.vidioc_subscribe_event = msm_server_v4l2_subscribe_event,
+	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
 	.vidioc_default = msm_ioctl_server,
 };
 
@@ -1763,7 +1794,11 @@ static void msm_cam_server_subdev_notify(struct v4l2_subdev *sd,
 	case NOTIFY_VFE_MSG_COMP_STATS:
 	case NOTIFY_VFE_BUF_EVT:
 		p_mctl = msm_cam_server_get_mctl(mctl_handle);
-		if (p_mctl->isp_notify && p_mctl->vfe_sdev)
+		if (p_mctl == NULL) {
+			pr_err("%s: Not find p_mctl instance!\n", __func__);
+			return;
+		}
+		if (p_mctl && p_mctl->isp_notify && p_mctl->vfe_sdev)
 			rc = p_mctl->isp_notify(p_mctl,
 				p_mctl->vfe_sdev, notification, arg);
 		break;
@@ -1782,18 +1817,20 @@ static void msm_cam_server_subdev_notify(struct v4l2_subdev *sd,
 		break;
 	case NOTIFY_AXI_RDI_SOF_COUNT:
 		p_mctl = msm_cam_server_get_mctl(mctl_handle);
-		if (p_mctl->axi_sdev)
+		if (p_mctl && p_mctl->axi_sdev)
 			rc = v4l2_subdev_call(p_mctl->axi_sdev, core, ioctl,
 				VIDIOC_MSM_AXI_RDI_COUNT_UPDATE, arg);
 		break;
 	case NOTIFY_PCLK_CHANGE:
 		p_mctl = v4l2_get_subdev_hostdata(sd);
-		if (p_mctl->axi_sdev)
-			rc = v4l2_subdev_call(p_mctl->axi_sdev, video,
-			s_crystal_freq, *(uint32_t *)arg, 0);
-		else
-			rc = v4l2_subdev_call(p_mctl->vfe_sdev, video,
-			s_crystal_freq, *(uint32_t *)arg, 0);
+		if (p_mctl) {
+			if (p_mctl->axi_sdev)
+				rc = v4l2_subdev_call(p_mctl->axi_sdev, video,
+				s_crystal_freq, *(uint32_t *)arg, 0);
+			else
+				rc = v4l2_subdev_call(p_mctl->vfe_sdev, video,
+				s_crystal_freq, *(uint32_t *)arg, 0);
+		}
 		break;
 	case NOTIFY_GESTURE_EVT:
 		rc = v4l2_subdev_call(g_server_dev.gesture_device,
@@ -1805,8 +1842,10 @@ static void msm_cam_server_subdev_notify(struct v4l2_subdev *sd,
 		break;
 	case NOTIFY_VFE_CAMIF_ERROR: {
 		p_mctl = msm_cam_server_get_mctl(mctl_handle);
-		msm_cam_server_send_error_evt(p_mctl, V4L2_EVENT_PRIVATE_START
-			+ MSM_CAM_APP_NOTIFY_ERROR_EVENT);
+		if (p_mctl)
+			msm_cam_server_send_error_evt(p_mctl,
+				V4L2_EVENT_PRIVATE_START +
+				MSM_CAM_APP_NOTIFY_ERROR_EVENT);
 		break;
 	}
 	default:
@@ -3012,6 +3051,8 @@ static long msm_ioctl_config(struct file *fp, unsigned int cmd,
 						break;
 					}
 					kfree(k_msg_value);
+					k_isp_event->isp_data.isp_msg.len = 0;
+					k_isp_event->isp_data.isp_msg.data = 0;
 					k_msg_value = NULL;
 				}
 			}
@@ -3025,6 +3066,7 @@ static long msm_ioctl_config(struct file *fp, unsigned int cmd,
 			break;
 		}
 		kfree(k_isp_event);
+		*((uint32_t *)ev.u.data) = 0;
 		k_isp_event = NULL;
 
 		/* Copy the v4l2_event structure back to the user*/
@@ -3089,9 +3131,7 @@ static long msm_ioctl_config(struct file *fp, unsigned int cmd,
 
 static int msm_close_config(struct inode *node, struct file *f)
 {
-	struct v4l2_event ev;
 	struct v4l2_event_subscription sub;
-	struct msm_isp_event_ctrl *isp_event;
 	struct msm_cam_config_dev *config_cam = f->private_data;
 
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
@@ -3102,20 +3142,6 @@ static int msm_close_config(struct inode *node, struct file *f)
 	msm_server_v4l2_unsubscribe_event(
 		&config_cam->config_stat_event_queue.eventHandle,
 		&sub);
-	while (v4l2_event_pending(
-		&config_cam->config_stat_event_queue.eventHandle)) {
-		v4l2_event_dequeue(
-			&config_cam->config_stat_event_queue.eventHandle,
-			&ev, O_NONBLOCK);
-		isp_event = (struct msm_isp_event_ctrl *)
-			(*((uint32_t *)ev.u.data));
-		if (isp_event) {
-			if (isp_event->isp_data.isp_msg.len != 0 &&
-				isp_event->isp_data.isp_msg.data != NULL)
-				kfree(isp_event->isp_data.isp_msg.data);
-			kfree(isp_event);
-		}
-	}
 	return 0;
 }
 

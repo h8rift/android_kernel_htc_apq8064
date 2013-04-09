@@ -669,11 +669,6 @@ static void __init elite_reserve(void)
 	msm_reserve();
 	//	fmem_pdata.phys = reserve_memory_for_fmem(fmem_pdata.size);
 }
-static int msm8960_change_memory_power(u64 start, u64 size,
-	int change_type)
-{
-	return soc_change_memory_power(start, size, change_type);
-}
 
 #ifdef CONFIG_CPU_FREQ_GOV_ONDEMAND_2_PHASE
 int set_two_phase_freq(int cpufreq);
@@ -3694,7 +3689,6 @@ static void __init elite_init(void)
 		ARRAY_SIZE(msm_slim_devices));
 	/* msm8960_init_dsps(); */
 	//	msm_pm_set_rpm_wakeup_irq(RPM_APCC_CPU0_WAKE_UP_IRQ);
-	change_memory_power = &msm8960_change_memory_power;
 
 #ifdef CONFIG_PERFLOCK
 	//	perflock_init(&elite_perflock_data);

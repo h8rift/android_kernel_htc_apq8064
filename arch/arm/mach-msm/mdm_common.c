@@ -138,41 +138,6 @@ static void mdm_device_list_remove(struct mdm_device *mdev)
 	spin_unlock_irqrestore(&mdm_devices_lock, flags);
 }
 
-struct mdm_device *mdm_get_device_by_device_id(int device_id)
-{
-	unsigned long flags;
-	struct mdm_device *mdev = NULL;
-
-	spin_lock_irqsave(&mdm_devices_lock, flags);
-	list_for_each_entry(mdev, &mdm_devices, link) {
-		if (mdev && mdev->mdm_data.device_id == device_id) {
-			spin_unlock_irqrestore(&mdm_devices_lock, flags);
-			return mdev;
-		}
-	}
-	spin_unlock_irqrestore(&mdm_devices_lock, flags);
-	return NULL;
-}
-
-struct mdm_device *mdm_get_device_by_name(const char *name)
-{
-	unsigned long flags;
-	struct mdm_device *mdev;
-
-	if (!name)
-		return NULL;
-	spin_lock_irqsave(&mdm_devices_lock, flags);
-	list_for_each_entry(mdev, &mdm_devices, link) {
-		if (mdev && !strncmp(mdev->device_name, name,
-				sizeof(mdev->device_name))) {
-			spin_unlock_irqrestore(&mdm_devices_lock, flags);
-			return mdev;
-		}
-	}
-	spin_unlock_irqrestore(&mdm_devices_lock, flags);
-	return NULL;
-}
-
 /* If the platform's cascading_ssr flag is set, the subsystem
  * restart module will restart the other modems so stop
  * monitoring them as well.
@@ -396,18 +361,12 @@ static void mdm_update_gpio_configs(struct mdm_device *mdev,
 	}
 }
 
-long mdm_modem_ioctl(struct file *filp, unsigned int cmd,
+static long mdm_modem_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg)
 {
 	int status, ret = 0;
-	struct mdm_device *mdev;
+	struct mdm_device *mdev = filp->private_data;
 	struct mdm_modem_drv *mdm_drv;
-
-	mdev = mdm_get_device_by_name(filp->f_path.dentry->d_iname);
-	if (!mdev) {
-		pr_err("%s: mdm_device not found\n", __func__);
-		return -ENODEV;
-	}
 
 	if (_IOC_TYPE(cmd) != CHARM_CODE) {
 		pr_err("%s: invalid ioctl code to mdm id %d\n",
@@ -499,15 +458,20 @@ long mdm_modem_ioctl(struct file *filp, unsigned int cmd,
 			pr_debug("%s Image upgrade not supported\n", __func__);
 		break;
 	case SHUTDOWN_CHARM:
-		if (!mdm_drv->pdata->send_shdn)
+		if (!mdm_drv->pdata->send_shdn ||
+				!mdm_drv->pdata->sysmon_subsys_id_valid) {
+			pr_debug("%s shutdown not supported for this mdm\n",
+					__func__);
 			break;
+		}
 		atomic_set(&mdm_drv->mdm_ready, 0);
 		if (mdm_debug_mask & MDM_DEBUG_MASK_SHDN_LOG)
 			pr_info("Sending shutdown request to mdm\n");
-		ret = sysmon_send_shutdown(SYSMON_SS_EXT_MODEM);
+		ret = sysmon_send_shutdown(mdm_drv->pdata->sysmon_subsys_id);
 		if (ret)
-			pr_err("%s: Graceful shutdown of the external modem failed, ret = %d\n",
+			pr_err("%s:Graceful shutdown of mdm failed, ret = %d\n",
 			   __func__, ret);
+		put_user(ret, (unsigned long __user *) arg);
 		break;
 	default:
 		pr_err("%s: invalid ioctl cmd = %d\n", __func__, _IOC_NR(cmd));
@@ -563,6 +527,11 @@ static irqreturn_t mdm_errfatal(int irq, void *dev_id)
 /* set the mdm_device as the file's private data */
 static int mdm_modem_open(struct inode *inode, struct file *file)
 {
+	struct miscdevice *misc = file->private_data;
+	struct mdm_device *mdev = container_of(misc,
+			struct mdm_device, misc_device);
+
+	file->private_data = mdev;
 	return 0;
 }
 
@@ -651,7 +620,10 @@ static int mdm_subsys_shutdown(const struct subsys_desc *crashed_subsys)
 
 	mdm_ssr_started(mdev);
 	cancel_delayed_work(&mdev->mdm2ap_status_check_work);
-	gpio_direction_output(mdm_drv->ap2mdm_errfatal_gpio, 1);
+
+	if (!mdm_drv->pdata->no_a2m_errfatal_on_ssr)
+		gpio_direction_output(mdm_drv->ap2mdm_errfatal_gpio, 1);
+
 	if (mdm_drv->pdata->ramdump_delay_ms > 0) {
 		/* Wait for the external modem to complete
 		 * its preparation for ramdumps.
@@ -723,7 +695,6 @@ static int mdm_subsys_ramdumps(int want_dumps,
 		if (!wait_for_completion_timeout(&mdev->mdm_ram_dumps,
 				msecs_to_jiffies(mdev->dump_timeout_ms))) {
 			mdm_drv->mdm_ram_dump_status = -ETIMEDOUT;
-			mdm_ssr_completed(mdev);
 			pr_err("%s: mdm modem ramdumps timed out.\n",
 					__func__);
 		} else
@@ -801,12 +772,18 @@ static void mdm_modem_initialize_data(struct platform_device *pdev,
 
 	memset((void *)&mdev->mdm_subsys, 0,
 		   sizeof(struct subsys_desc));
-	if (mdev->mdm_data.device_id <= 0)
-		snprintf(mdev->subsys_name, sizeof(mdev->subsys_name),
-			 "%s",  EXTERNAL_MODEM);
-	else
-		snprintf(mdev->subsys_name, sizeof(mdev->subsys_name),
-			 "%s.%d",  EXTERNAL_MODEM, mdev->mdm_data.device_id);
+	if (mdm_drv->pdata->subsys_name) {
+		strlcpy(mdev->subsys_name, mdm_drv->pdata->subsys_name,
+				sizeof(mdev->subsys_name));
+	} else {
+		if (mdev->mdm_data.device_id <= 0)
+			snprintf(mdev->subsys_name, sizeof(mdev->subsys_name),
+				"%s",  EXTERNAL_MODEM);
+		else
+			snprintf(mdev->subsys_name, sizeof(mdev->subsys_name),
+				"%s.%d",  EXTERNAL_MODEM,
+				mdev->mdm_data.device_id);
+	}
 	mdev->mdm_subsys.shutdown = mdm_subsys_shutdown;
 	mdev->mdm_subsys.ramdump = mdm_subsys_ramdumps;
 	mdev->mdm_subsys.powerup = mdm_subsys_powerup;
@@ -887,7 +864,7 @@ static void mdm_modem_initialize_data(struct platform_device *pdev,
 
 	mdm_drv->boot_type                  = CHARM_NORMAL_BOOT;
 
-	mdm_drv->dump_timeout_ms = mdm_drv->pdata->ramdump_timeout_ms > 0 ?
+	mdev->dump_timeout_ms = mdm_drv->pdata->ramdump_timeout_ms > 0 ?
 		mdm_drv->pdata->ramdump_timeout_ms : MDM_RDUMP_TIMEOUT;
 
 	init_completion(&mdev->mdm_needs_reload);
@@ -1075,6 +1052,7 @@ static int __devinit mdm_modem_probe(struct platform_device *pdev)
 		goto init_err;
 	}
 
+	platform_set_drvdata(pdev, mdev);
 	mdm_modem_initialize_data(pdev, mdev);
 
 	if (mdm_ops->debug_state_changed_cb)
@@ -1121,10 +1099,7 @@ init_err:
 static int __devexit mdm_modem_remove(struct platform_device *pdev)
 {
 	int ret;
-	struct mdm_device *mdev = mdm_get_device_by_device_id(pdev->id);
-
-	if (!mdev)
-		return -ENODEV;
+	struct mdm_device *mdev = platform_get_drvdata(pdev);
 
 	pr_debug("%s: removing device id %d\n",
 			__func__, mdev->mdm_data.device_id);
@@ -1138,9 +1113,7 @@ static int __devexit mdm_modem_remove(struct platform_device *pdev)
 static void mdm_modem_shutdown(struct platform_device *pdev)
 {
 	struct mdm_modem_drv *mdm_drv;
-	struct mdm_device *mdev = mdm_get_device_by_device_id(pdev->id);
-	if (!mdev)
-		return;
+	struct mdm_device *mdev = platform_get_drvdata(pdev);
 
 	pr_debug("%s: shutting down device id %d\n",
 		 __func__, mdev->mdm_data.device_id);

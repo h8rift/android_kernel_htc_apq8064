@@ -2,7 +2,7 @@
  * drivers/gpu/ion/ion_system_heap.c
  *
  * Copyright (C) 2011 Google, Inc.
- * Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -254,6 +254,14 @@ int ion_system_heap_map_iommu(struct ion_buffer *buffer,
 
 	data->mapped_size = iova_length;
 	extra = iova_length - buffer->size;
+
+	/* Use the biggest alignment to allow bigger IOMMU mappings.
+	 * Use the first entry since the first entry will always be the
+	 * biggest entry. To take advantage of bigger mapping sizes both the
+	 * VA and PA addresses have to be aligned to the biggest size.
+	 */
+	if (table->sgl->length > align)
+		align = table->sgl->length;
 
 	ret = msm_allocate_iova_address(domain_num, partition_num,
 						data->mapped_size, align,

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -117,11 +117,13 @@ static void mdm_power_down_common(struct mdm_modem_drv *mdm_drv)
 		}
 		msleep(100);
 	}
-	if (i == 0) {
-		pr_err("%s:id %d: MDM2AP_STATUS never went low. Doing a hard reset\n",
-			   __func__, mdm_drv->device_id);
-		gpio_direction_output(mdm_drv->ap2mdm_soft_reset_gpio,
+
+	/* Assert the soft reset line whether mdm2ap_status went low or not */
+	gpio_direction_output(mdm_drv->ap2mdm_soft_reset_gpio,
 					soft_reset_direction);
+	if (i == 0) {
+		pr_err("%s: MDM2AP_STATUS never went low. Doing a hard reset\n",
+			   __func__);
 		/*
 		* Currently, there is a debounce timer on the charm PMIC. It is
 		* necessary to hold the PMIC RESET low for ~3.5 seconds
@@ -136,6 +138,14 @@ static void mdm_do_first_power_on(struct mdm_modem_drv *mdm_drv)
 {
 	int i;
 	int pblrdy;
+	int kpd_direction_assert = 1,
+		kpd_direction_de_assert = 0;
+
+	if (mdm_drv->pdata->kpd_not_inverted) {
+		kpd_direction_assert = 0;
+		kpd_direction_de_assert = 1;
+	}
+
 	if (mdm_drv->power_on_count != 1) {
 		pr_err("%s:id %d: Calling fn when power_on_count != 1\n",
 			   __func__, mdm_drv->device_id);
@@ -151,7 +161,9 @@ static void mdm_do_first_power_on(struct mdm_modem_drv *mdm_drv)
 	 * instead of just de-asserting it. No harm done if the modem was
 	 * powered down.
 	 */
-	mdm_toggle_soft_reset(mdm_drv);
+	if (!mdm_drv->pdata->no_reset_on_first_powerup)
+		mdm_toggle_soft_reset(mdm_drv);
+
 	/* If the device has a kpd pwr gpio then toggle it. */
 	if (GPIO_IS_VALID(mdm_drv->ap2mdm_kpdpwr_n_gpio)) {
 		/* Pull AP2MDM_KPDPWR gpio high and wait for PS_HOLD to settle,
@@ -159,9 +171,11 @@ static void mdm_do_first_power_on(struct mdm_modem_drv *mdm_drv)
 		 */
 		pr_debug("%s:id %d: Pulling AP2MDM_KPDPWR gpio high\n",
 				 __func__, mdm_drv->device_id);
-		gpio_direction_output(mdm_drv->ap2mdm_kpdpwr_n_gpio, 1);
+		gpio_direction_output(mdm_drv->ap2mdm_kpdpwr_n_gpio,
+				kpd_direction_assert);
 		msleep(1000);
-		gpio_direction_output(mdm_drv->ap2mdm_kpdpwr_n_gpio, 0);
+		gpio_direction_output(mdm_drv->ap2mdm_kpdpwr_n_gpio,
+				kpd_direction_de_assert);
 	}
 
 	if (!GPIO_IS_VALID(mdm_drv->mdm2ap_pblrdy))

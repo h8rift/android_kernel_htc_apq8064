@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,6 +11,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/firmware.h>
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/err.h>
@@ -23,7 +24,10 @@
 #include <linux/jiffies.h>
 #include <linux/gpio.h>
 #include <linux/wakelock.h>
+#include <linux/delay.h>
 #include <mach/peripheral-loader.h>
+#include <mach/msm_smd.h>
+#include <mach/msm_iomap.h>
 
 #define DEVICE "wcnss_wlan"
 #define VERSION "1.01"
@@ -31,6 +35,7 @@
 
 /* module params */
 #define WCNSS_CONFIG_UNSPECIFIED (-1)
+
 static int has_48mhz_xo = WCNSS_CONFIG_UNSPECIFIED;
 module_param(has_48mhz_xo, int, S_IWUSR | S_IRUGO);
 MODULE_PARM_DESC(has_48mhz_xo, "Is an external 48 MHz XO present");
@@ -43,6 +48,92 @@ static DEFINE_SPINLOCK(reg_spinlock);
 #define RIVA_SSR_BIT			BIT(23)
 #define RIVA_SUSPEND_BIT		BIT(24)
 
+#define MSM_RIVA_CCU_BASE			0x03200800
+
+#define CCU_INVALID_ADDR_OFFSET		0x100
+#define CCU_LAST_ADDR0_OFFSET		0x104
+#define CCU_LAST_ADDR1_OFFSET		0x108
+#define CCU_LAST_ADDR2_OFFSET		0x10c
+
+#define WCNSS_CTRL_CHANNEL			"WCNSS_CTRL"
+#define WCNSS_MAX_FRAME_SIZE		500
+#define WCNSS_VERSION_LEN			30
+
+/* message types */
+#define WCNSS_CTRL_MSG_START	0x01000000
+#define	WCNSS_VERSION_REQ		(WCNSS_CTRL_MSG_START + 0)
+#define	WCNSS_VERSION_RSP		(WCNSS_CTRL_MSG_START + 1)
+#define WCNSS_NVBIN_DNLD_REQ  (WCNSS_CTRL_MSG_START + 2)
+#define WCNSS_NVBIN_DNLD_RSP  (WCNSS_CTRL_MSG_START + 3)
+
+
+#define VALID_VERSION(version) \
+	((strncmp(version, "INVALID", WCNSS_VERSION_LEN)) ? 1 : 0)
+
+struct smd_msg_hdr {
+	unsigned int msg_type;
+	unsigned int msg_len;
+};
+
+struct wcnss_version {
+	struct smd_msg_hdr hdr;
+	unsigned char  major;
+	unsigned char  minor;
+	unsigned char  version;
+	unsigned char  revision;
+};
+
+#define NVBIN_FILE "wlan/prima/WCNSS_qcom_wlan_nv.bin"
+
+/*
+ * On SMD channel 4K of maximum data can be transferred, including message
+ * header, so NV fragment size as next multiple of 1Kb is 3Kb.
+ */
+#define NV_FRAGMENT_SIZE  3072
+
+/* Macro to find the total number fragments of the NV bin Image */
+#define TOTALFRAGMENTS(x) (((x % NV_FRAGMENT_SIZE) == 0) ? \
+	(x / NV_FRAGMENT_SIZE) : ((x / NV_FRAGMENT_SIZE) + 1))
+
+struct nvbin_dnld_req_params {
+	/*
+	 * Fragment sequence number of the NV bin Image. NV Bin Image
+	 * might not fit into one message due to size limitation of
+	 * the SMD channel FIFO so entire NV blob is chopped into
+	 * multiple fragments starting with seqeunce number 0. The
+	 * last fragment is indicated by marking is_last_fragment field
+	 * to 1. At receiving side, NV blobs would be concatenated
+	 * together without any padding bytes in between.
+	 */
+	unsigned short frag_number;
+
+	/*
+	 * When set to 1 it indicates that no more fragments will
+	 * be sent. Receiver shall send back response message after
+	 * last fragment.
+	 */
+	unsigned short is_last_fragment;
+
+	/* NV Image size (number of bytes) */
+	unsigned int nvbin_buffer_size;
+
+	/*
+	 * Following the 'nvbin_buffer_size', there should be
+	 * nvbin_buffer_size bytes of NV bin Image i.e.
+	 * uint8[nvbin_buffer_size].
+	 */
+};
+
+struct nvbin_dnld_req_msg {
+	/*
+	 * Note: The length specified in nvbin_dnld_req_msg messages
+	 * should be hdr.msg_len = sizeof(nvbin_dnld_req_msg) +
+	 * nvbin_buffer_size.
+	 */
+	struct smd_msg_hdr hdr;
+	struct nvbin_dnld_req_params dnld_req_params;
+};
+
 static struct {
 	struct platform_device *pdev;
 	void		*pil;
@@ -53,11 +144,17 @@ static struct {
 	const struct dev_pm_ops *pm_ops;
 	int		triggered;
 	int		smd_channel_ready;
+	int		cold_boot_done;
+	smd_channel_t	*smd_ch;
+	unsigned char	wcnss_version[WCNSS_VERSION_LEN];
 	unsigned int	serial_number;
 	int		thermal_mitigation;
 	void		(*tm_notify)(struct device *, int);
 	struct wcnss_wlan_config wlan_config;
 	struct delayed_work wcnss_work;
+	struct work_struct wcnssctrl_version_work;
+	struct work_struct wcnssctrl_nvbin_dnld_work;
+	struct work_struct wcnssctrl_rx_work;
 	struct wake_lock wcnss_wake_lock;
 	void __iomem *msm_wcnss_base;
 } *penv = NULL;
@@ -118,6 +215,62 @@ static ssize_t wcnss_thermal_mitigation_store(struct device *dev,
 static DEVICE_ATTR(thermal_mitigation, S_IRUSR | S_IWUSR,
 	wcnss_thermal_mitigation_show, wcnss_thermal_mitigation_store);
 
+
+static ssize_t wcnss_version_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	if (!penv)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%s", penv->wcnss_version);
+}
+
+static DEVICE_ATTR(wcnss_version, S_IRUSR,
+		wcnss_version_show, NULL);
+
+/* wcnss_reset_intr() is invoked when host drivers fails to
+ * communicate with WCNSS over SMD; so logging these registers
+ * helps to know WCNSS failure reason */
+static void wcnss_log_ccpu_regs(void)
+{
+	void __iomem *ccu_base;
+	void __iomem *ccu_reg;
+	u32 reg = 0;
+
+	ccu_base = ioremap(MSM_RIVA_CCU_BASE, SZ_512);
+	if (!ccu_base) {
+		pr_err("%s: ioremap WCNSS CCU reg failed\n", __func__);
+		return;
+	}
+
+	ccu_reg = ccu_base + CCU_INVALID_ADDR_OFFSET;
+	reg = readl_relaxed(ccu_reg);
+	pr_info("%s: CCU_CCPU_INVALID_ADDR %08x\n", __func__, reg);
+
+	ccu_reg = ccu_base + CCU_LAST_ADDR0_OFFSET;
+	reg = readl_relaxed(ccu_reg);
+	pr_info("%s: CCU_CCPU_LAST_ADDR0 %08x\n", __func__, reg);
+
+	ccu_reg = ccu_base + CCU_LAST_ADDR1_OFFSET;
+	reg = readl_relaxed(ccu_reg);
+	pr_info("%s: CCU_CCPU_LAST_ADDR1 %08x\n", __func__, reg);
+
+	ccu_reg = ccu_base + CCU_LAST_ADDR2_OFFSET;
+	reg = readl_relaxed(ccu_reg);
+	pr_info("%s: CCU_CCPU_LAST_ADDR2 %08x\n", __func__, reg);
+
+	iounmap(ccu_base);
+}
+
+/* interface to reset Riva by sending the reset interrupt */
+void wcnss_reset_intr(void)
+{
+	wcnss_log_ccpu_regs();
+	wmb();
+	__raw_writel(1 << 24, MSM_APCS_GCC_BASE + 0x8);
+}
+EXPORT_SYMBOL(wcnss_reset_intr);
+
 static int wcnss_create_sysfs(struct device *dev)
 {
 	int ret;
@@ -130,11 +283,21 @@ static int wcnss_create_sysfs(struct device *dev)
 		return ret;
 
 	ret = device_create_file(dev, &dev_attr_thermal_mitigation);
-	if (ret) {
-		device_remove_file(dev, &dev_attr_serial_number);
-		return ret;
-	}
+	if (ret)
+		goto remove_serial;
+
+	ret = device_create_file(dev, &dev_attr_wcnss_version);
+	if (ret)
+		goto remove_thermal;
+
 	return 0;
+
+remove_thermal:
+	device_remove_file(dev, &dev_attr_thermal_mitigation);
+remove_serial:
+	device_remove_file(dev, &dev_attr_serial_number);
+
+	return ret;
 }
 
 static void wcnss_remove_sysfs(struct device *dev)
@@ -142,6 +305,39 @@ static void wcnss_remove_sysfs(struct device *dev)
 	if (dev) {
 		device_remove_file(dev, &dev_attr_serial_number);
 		device_remove_file(dev, &dev_attr_thermal_mitigation);
+		device_remove_file(dev, &dev_attr_wcnss_version);
+	}
+}
+static void wcnss_smd_notify_event(void *data, unsigned int event)
+{
+	int len = 0;
+
+	if (penv != data) {
+		pr_err("wcnss: invalid env pointer in smd callback\n");
+		return;
+	}
+	switch (event) {
+	case SMD_EVENT_DATA:
+		len = smd_read_avail(penv->smd_ch);
+		if (len < 0)
+			pr_err("wcnss: failed to read from smd %d\n", len);
+		schedule_work(&penv->wcnssctrl_rx_work);
+		break;
+
+	case SMD_EVENT_OPEN:
+		pr_debug("wcnss: opening WCNSS SMD channel :%s",
+				WCNSS_CTRL_CHANNEL);
+		if (!VALID_VERSION(penv->wcnss_version))
+			schedule_work(&penv->wcnssctrl_version_work);
+		break;
+
+	case SMD_EVENT_CLOSE:
+		pr_debug("wcnss: closing WCNSS SMD channel :%s",
+				WCNSS_CTRL_CHANNEL);
+		break;
+
+	default:
+		break;
 	}
 }
 
@@ -221,6 +417,45 @@ static struct platform_driver wcnss_wlan_ctrl_driver = {
 	},
 	.probe	= wcnss_wlan_ctrl_probe,
 	.remove	= __devexit_p(wcnss_wlan_ctrl_remove),
+};
+
+static int __devexit
+wcnss_ctrl_remove(struct platform_device *pdev)
+{
+	if (penv && penv->smd_ch)
+		smd_close(penv->smd_ch);
+
+	return 0;
+}
+
+static int __devinit
+wcnss_ctrl_probe(struct platform_device *pdev)
+{
+	int ret = 0;
+
+	if (!penv)
+		return -ENODEV;
+
+	ret = smd_named_open_on_edge(WCNSS_CTRL_CHANNEL, SMD_APPS_WCNSS,
+			&penv->smd_ch, penv, wcnss_smd_notify_event);
+	if (ret < 0) {
+		pr_err("wcnss: cannot open the smd command channel %s: %d\n",
+				WCNSS_CTRL_CHANNEL, ret);
+		return -ENODEV;
+	}
+	smd_disable_read_intr(penv->smd_ch);
+
+	return 0;
+}
+
+/* platform device for WCNSS_CTRL SMD channel */
+static struct platform_driver wcnss_ctrl_driver = {
+	.driver = {
+		.name	= "WCNSS_CTRL",
+		.owner	= THIS_MODULE,
+	},
+	.probe	= wcnss_ctrl_probe,
+	.remove	= __devexit_p(wcnss_ctrl_remove),
 };
 
 struct device *wcnss_wlan_get_device(void)
@@ -430,6 +665,214 @@ void wcnss_allow_suspend()
 }
 EXPORT_SYMBOL(wcnss_allow_suspend);
 
+int wcnss_cold_boot_done(void)
+{
+	if (penv)
+		return penv->cold_boot_done;
+	else
+		return -ENODEV;
+}
+EXPORT_SYMBOL(wcnss_cold_boot_done);
+
+
+static int wcnss_smd_tx(void *data, int len)
+{
+	int ret = 0;
+
+	ret = smd_write_avail(penv->smd_ch);
+	if (ret < len) {
+		pr_err("wcnss: no space available for smd frame\n");
+		return -ENOSPC;
+	}
+	ret = smd_write(penv->smd_ch, data, len);
+	if (ret < len) {
+		pr_err("wcnss: failed to write Command %d", len);
+		ret = -ENODEV;
+	}
+	return ret;
+}
+
+static void wcnssctrl_rx_handler(struct work_struct *worker)
+{
+	int len = 0;
+	int rc = 0;
+	unsigned char buf[WCNSS_MAX_FRAME_SIZE];
+	struct smd_msg_hdr *phdr;
+	struct wcnss_version *pversion;
+
+	len = smd_read_avail(penv->smd_ch);
+	if (len > WCNSS_MAX_FRAME_SIZE) {
+		pr_err("wcnss: frame larger than the allowed size\n");
+		smd_read(penv->smd_ch, NULL, len);
+		return;
+	}
+	if (len <= 0)
+		return;
+
+	rc = smd_read(penv->smd_ch, buf, len);
+	if (rc < len) {
+		pr_err("wcnss: incomplete data read from smd\n");
+		return;
+	}
+
+	phdr = (struct smd_msg_hdr *)buf;
+
+	switch (phdr->msg_type) {
+
+	case WCNSS_VERSION_RSP:
+		pversion = (struct wcnss_version *)buf;
+		if (len != sizeof(struct wcnss_version)) {
+			pr_err("wcnss: invalid version data from wcnss %d\n",
+				len);
+			return;
+		}
+		snprintf(penv->wcnss_version, WCNSS_VERSION_LEN,
+			"%02x%02x%02x%02x", pversion->major, pversion->minor,
+					pversion->version, pversion->revision);
+		pr_info("wcnss: version %s\n", penv->wcnss_version);
+		/*
+		 * schedule work to download nvbin to riva ccpu,
+		 * only if riva major >= 1 and minor >= 4.
+		 */
+		if ((pversion->major >= 1) && (pversion->minor >= 4)) {
+			pr_info("wcnss: schedule dnld work for riva\n");
+			schedule_work(&penv->wcnssctrl_nvbin_dnld_work);
+		}
+		break;
+
+	case WCNSS_NVBIN_DNLD_RSP:
+		pr_info("wcnss: received WCNSS_NVBIN_DNLD_RSP from ccpu\n");
+		break;
+
+	default:
+		pr_err("wcnss: invalid message type %d\n", phdr->msg_type);
+	}
+	return;
+}
+
+static void wcnss_send_version_req(struct work_struct *worker)
+{
+	struct smd_msg_hdr smd_msg;
+	int ret = 0;
+
+	smd_msg.msg_type = WCNSS_VERSION_REQ;
+	smd_msg.msg_len = sizeof(smd_msg);
+	ret = wcnss_smd_tx(&smd_msg, smd_msg.msg_len);
+	if (ret < 0)
+		pr_err("wcnss: smd tx failed\n");
+
+	return;
+}
+
+static void wcnss_nvbin_dnld_req(struct work_struct *worker)
+{
+	int ret = 0;
+	struct nvbin_dnld_req_msg *dnld_req_msg;
+	unsigned short total_fragments = 0;
+	unsigned short count = 0;
+	unsigned short retry_count = 0;
+	unsigned short cur_frag_size = 0;
+	unsigned char *outbuffer = NULL;
+	const void *nv_blob_addr = NULL;
+	unsigned int nv_blob_size = 0;
+	const struct firmware *nv = NULL;
+	struct device *dev = &penv->pdev->dev;
+
+	ret = request_firmware(&nv, NVBIN_FILE, dev);
+
+	if (ret || !nv || !nv->data || !nv->size) {
+		pr_err("wcnss: wcnss_nvbin_dnld_req: request_firmware failed for %s\n",
+			NVBIN_FILE);
+		return;
+	}
+
+	/*
+	 * First 4 bytes in nv blob is validity bitmap.
+	 * We cannot validate nv, so skip those 4 bytes.
+	 */
+	nv_blob_addr = nv->data + 4;
+	nv_blob_size = nv->size - 4;
+
+	total_fragments = TOTALFRAGMENTS(nv_blob_size);
+
+	pr_info("wcnss: NV bin size: %d, total_fragments: %d\n",
+		nv_blob_size, total_fragments);
+
+	/* get buffer for nv bin dnld req message */
+	outbuffer = kmalloc((sizeof(struct nvbin_dnld_req_msg) +
+		NV_FRAGMENT_SIZE), GFP_KERNEL);
+
+	if (NULL == outbuffer) {
+		pr_err("wcnss: wcnss_nvbin_dnld_req: failed to get buffer\n");
+		goto err_free_nv;
+	}
+
+	dnld_req_msg = (struct nvbin_dnld_req_msg *)outbuffer;
+
+	dnld_req_msg->hdr.msg_type = WCNSS_NVBIN_DNLD_REQ;
+
+	for (count = 0; count < total_fragments; count++) {
+		dnld_req_msg->dnld_req_params.frag_number = count;
+
+		if (count == (total_fragments - 1)) {
+			/* last fragment, take care of boundry condition */
+			cur_frag_size = nv_blob_size % NV_FRAGMENT_SIZE;
+			if (!cur_frag_size)
+				cur_frag_size = NV_FRAGMENT_SIZE;
+
+			dnld_req_msg->dnld_req_params.is_last_fragment = 1;
+		} else {
+			cur_frag_size = NV_FRAGMENT_SIZE;
+			dnld_req_msg->dnld_req_params.is_last_fragment = 0;
+		}
+
+		dnld_req_msg->dnld_req_params.nvbin_buffer_size =
+			cur_frag_size;
+
+		dnld_req_msg->hdr.msg_len =
+			sizeof(struct nvbin_dnld_req_msg) + cur_frag_size;
+
+		/* copy NV fragment */
+		memcpy((outbuffer + sizeof(struct nvbin_dnld_req_msg)),
+			(nv_blob_addr + count * NV_FRAGMENT_SIZE),
+			cur_frag_size);
+
+		ret = wcnss_smd_tx(outbuffer, dnld_req_msg->hdr.msg_len);
+
+		retry_count = 0;
+		while ((ret == -ENOSPC) && (retry_count <= 3)) {
+			pr_debug("wcnss: wcnss_nvbin_dnld_req: smd tx failed, ENOSPC\n");
+			pr_debug("fragment: %d, len: %d, TotFragments: %d, retry_count: %d\n",
+				count, dnld_req_msg->hdr.msg_len,
+				total_fragments, retry_count);
+
+			/* wait and try again */
+			msleep(20);
+			retry_count++;
+			ret = wcnss_smd_tx(outbuffer,
+					dnld_req_msg->hdr.msg_len);
+		}
+
+		if (ret < 0) {
+			pr_err("wcnss: wcnss_nvbin_dnld_req: smd tx failed\n");
+			pr_err("fragment %d, len: %d, TotFragments: %d, retry_count: %d\n",
+				count, dnld_req_msg->hdr.msg_len,
+				total_fragments, retry_count);
+			goto err_dnld;
+		}
+	}
+
+err_dnld:
+	/* free buffer */
+	kfree(outbuffer);
+
+err_free_nv:
+	/* release firmware */
+	release_firmware(nv);
+
+	return;
+}
+
 static int
 wcnss_trigger_config(struct platform_device *pdev)
 {
@@ -448,6 +891,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 	penv->wlan_config.use_48mhz_xo = has_48mhz_xo;
 
 	penv->thermal_mitigation = 0;
+	strlcpy(penv->wcnss_version, "INVALID", WCNSS_VERSION_LEN);
 
 	penv->gpios_5wire = platform_get_resource_byname(pdev, IORESOURCE_IO,
 							"wcnss_gpios_5wire");
@@ -497,10 +941,9 @@ wcnss_trigger_config(struct platform_device *pdev)
 		goto fail_res;
 	}
 
-	/* register sysfs entries */
-	ret = wcnss_create_sysfs(&pdev->dev);
-	if (ret)
-		goto fail_sysfs;
+	INIT_WORK(&penv->wcnssctrl_rx_work, wcnssctrl_rx_handler);
+	INIT_WORK(&penv->wcnssctrl_version_work, wcnss_send_version_req);
+	INIT_WORK(&penv->wcnssctrl_nvbin_dnld_work, wcnss_nvbin_dnld_req);
 
 	wake_lock_init(&penv->wcnss_wake_lock, WAKE_LOCK_SUSPEND, "wcnss");
 
@@ -510,12 +953,13 @@ wcnss_trigger_config(struct platform_device *pdev)
 		goto fail_wake;
 	}
 
+	penv->cold_boot_done = 1;
+
 	return 0;
 
 fail_wake:
 	wake_lock_destroy(&penv->wcnss_wake_lock);
 
-fail_sysfs:
 fail_res:
 	if (penv->pil)
 		pil_put(penv->pil);
@@ -557,6 +1001,8 @@ static struct miscdevice wcnss_misc = {
 static int __devinit
 wcnss_wlan_probe(struct platform_device *pdev)
 {
+	int ret = 0;
+
 	/* verify we haven't been called more than once */
 	if (penv) {
 		dev_err(&pdev->dev, "cannot handle multiple devices.\n");
@@ -570,6 +1016,12 @@ wcnss_wlan_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	penv->pdev = pdev;
+
+	/* register sysfs entries */
+	ret = wcnss_create_sysfs(&pdev->dev);
+	if (ret)
+		return -ENOENT;
+
 
 #ifdef MODULE
 
@@ -626,6 +1078,7 @@ static int __init wcnss_wlan_init(void)
 {
 	platform_driver_register(&wcnss_wlan_driver);
 	platform_driver_register(&wcnss_wlan_ctrl_driver);
+	platform_driver_register(&wcnss_ctrl_driver);
 
 	return 0;
 }
@@ -641,6 +1094,7 @@ static void __exit wcnss_wlan_exit(void)
 		penv = NULL;
 	}
 
+	platform_driver_unregister(&wcnss_ctrl_driver);
 	platform_driver_unregister(&wcnss_wlan_ctrl_driver);
 	platform_driver_unregister(&wcnss_wlan_driver);
 }

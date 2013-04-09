@@ -1259,7 +1259,7 @@ static struct snd_soc_dai_link msm_dai[] = {
 		.ignore_pmdown_time = 1,/* this dainlink has playback support */
 		.codec_dai_name = "snd-soc-dummy-dai",
 		.codec_name = "snd-soc-dummy",
-		.be_id = MSM_FRONTEND_DAI_SGLTE,
+		.be_id = MSM_FRONTEND_DAI_VOICE2,
 	},
 	/* Backend BT/FM DAI Links */
 	{

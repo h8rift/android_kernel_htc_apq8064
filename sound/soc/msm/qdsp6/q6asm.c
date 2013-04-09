@@ -1,6 +1,5 @@
-
 /*
- * Copyright (c) 2010-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -894,7 +893,11 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 		case ASM_STREAM_CMD_SET_ENCDEC_PARAM:
 		case ASM_STREAM_CMD_OPEN_WRITE_COMPRESSED:
 		case ASM_STREAM_CMD_OPEN_READ_COMPRESSED:
-			if (atomic_read(&ac->cmd_state) && wakeup_flag) {
+			if (payload[0] == ASM_STREAM_CMD_CLOSE) {
+				atomic_set(&ac->cmd_close_state, 0);
+				wake_up(&ac->cmd_wait);
+			} else if (atomic_read(&ac->cmd_state) &&
+					wakeup_flag) {
 				atomic_set(&ac->cmd_state, 0);
 				if (payload[1] == ADSP_EUNSUPPORTED) {
 					pr_debug("paload[1]:%d unsupported",
@@ -2038,6 +2041,39 @@ int q6asm_cfg_dual_mono_aac(struct audio_client *ac,
 	if (!rc) {
 		pr_err("%s:timeout opcode[0x%x]\n", __func__,
 						dual_mono.hdr.opcode);
+		goto fail_cmd;
+	}
+	return 0;
+fail_cmd:
+	return -EINVAL;
+}
+
+int q6asm_cfg_aac_sel_mix_coef(struct audio_client *ac, uint32_t mix_coeff)
+{
+	struct asm_aac_stereo_mix_coeff_selection_param aac_mix_coeff;
+	int rc = 0;
+	q6asm_add_hdr(ac, &aac_mix_coeff.hdr, sizeof(aac_mix_coeff), TRUE);
+	aac_mix_coeff.hdr.opcode =
+		 ASM_STREAM_CMD_SET_ENCDEC_PARAM;
+	aac_mix_coeff.param_id =
+		ASM_PARAM_ID_AAC_STEREO_MIX_COEFF_SELECTION_FLAG;
+	aac_mix_coeff.param_size =
+		 sizeof(struct asm_aac_stereo_mix_coeff_selection_param);
+	aac_mix_coeff.aac_stereo_mix_coeff_flag	= mix_coeff;
+	pr_debug("%s, mix_coeff = %u", __func__, mix_coeff);
+	rc = apr_send_pkt(ac->apr, (uint32_t *) &aac_mix_coeff);
+	if (rc < 0) {
+		pr_err("%s:Command opcode[0x%x]paramid[0x%x] failed\n",
+			__func__, ASM_STREAM_CMD_SET_ENCDEC_PARAM,
+			ASM_PARAM_ID_AAC_STEREO_MIX_COEFF_SELECTION_FLAG);
+		rc = -EINVAL;
+		goto fail_cmd;
+	}
+	rc = wait_event_timeout(ac->cmd_wait,
+			(atomic_read(&ac->cmd_state) == 0), 5*HZ);
+	if (!rc) {
+		pr_err("%s:timeout opcode[0x%x]\n", __func__,
+						aac_mix_coeff.hdr.opcode);
 		goto fail_cmd;
 	}
 	return 0;
@@ -3651,13 +3687,13 @@ fail_cmd:
 	return -EINVAL;
 }
 
-uint64_t q6asm_get_session_time(struct audio_client *ac)
+int q6asm_get_session_time(struct audio_client *ac, uint64_t *tstamp)
 {
 	struct apr_hdr hdr;
 	int rc;
 
-	if (!ac || ac->apr == NULL) {
-		pr_err("APR handle NULL\n");
+	if (!ac || ac->apr == NULL || tstamp == NULL) {
+		pr_err("APR handle or tstamp NULL\n");
 		return -EINVAL;
 	}
 	q6asm_add_hdr(ac, &hdr, sizeof(hdr), FALSE);
@@ -3679,7 +3715,9 @@ uint64_t q6asm_get_session_time(struct audio_client *ac)
 			__func__);
 		goto fail_cmd;
 	}
-	return ac->time_stamp;
+
+	*tstamp = ac->time_stamp;
+	return 0;
 
 fail_cmd:
 	return -EINVAL;
@@ -3722,7 +3760,8 @@ int q6asm_cmd(struct audio_client *ac, int cmd)
 	case CMD_CLOSE:
 		pr_debug("%s:CMD_CLOSE\n", __func__);
 		hdr.opcode = ASM_STREAM_CMD_CLOSE;
-		state = &ac->cmd_state;
+		atomic_set(&ac->cmd_close_state, 1);
+		state = &ac->cmd_close_state;
 		break;
 	default:
 		pr_err("Invalid format[%d]\n", cmd);

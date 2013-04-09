@@ -54,6 +54,7 @@
 #include <linux/device.h>
 #include <linux/wakelock.h>
 #include <linux/debugfs.h>
+#include <linux/gpio.h>
 #include <asm/atomic.h>
 #include <asm/irq.h>
 
@@ -141,6 +142,15 @@ struct msm_hs_wakeup {
 	char rx_to_inject;
 };
 
+/*
+ * UART can be used in 2-wire or 4-wire mode.
+ * Use uart_func_mode to set 2-wire or 4-wire mode.
+ */
+enum uart_func_mode {
+	UART_TWO_WIRE, /* can't support HW Flow control. */
+	UART_FOUR_WIRE,/* can support HW Flow control. */
+};
+
 struct msm_hs_port {
 	struct uart_port uport;
 	unsigned long imr_reg;  /* shadow value of UARTDM_IMR */
@@ -169,6 +179,8 @@ struct msm_hs_port {
 	struct workqueue_struct *hsuart_wq; /* hsuart workqueue */
 	struct mutex clk_mutex; /* mutex to guard against clock off/clock on */
 	bool tty_flush_receive;
+	bool rx_discard_flush_issued;
+	enum uart_func_mode func_mode;
 };
 
 #define MSM_UARTDM_BURST_SIZE 16   /* DM burst size (in bytes) */
@@ -176,6 +188,7 @@ struct msm_hs_port {
 #define UARTDM_RX_BUF_SIZE 512
 #define RETRY_TIMEOUT 5
 #define UARTDM_NR 256
+#define RX_FLUSH_COMPLETE_TIMEOUT 300 /* In jiffies */
 
 static struct dentry *debug_base;
 static struct msm_hs_port q_uart_port[UARTDM_NR];
@@ -439,6 +452,133 @@ static int __devexit msm_hs_remove(struct platform_device *pdev)
 	return 0;
 }
 
+/**
+ * msm_hs_config_uart_tx_rx_gpios - Configures UART Tx and RX GPIOs
+ * @port: uart port
+ */
+static int msm_hs_config_uart_tx_rx_gpios(struct uart_port *uport)
+{
+	struct platform_device *pdev = to_platform_device(uport->dev);
+	const struct msm_serial_hs_platform_data *pdata =
+					pdev->dev.platform_data;
+	int ret = -EINVAL;
+
+
+	ret = gpio_request(pdata->uart_tx_gpio, "UART_TX_GPIO");
+	if (unlikely(ret)) {
+		pr_err("gpio request failed for:%d\n",
+				pdata->uart_tx_gpio);
+		goto exit_uart_config;
+	}
+
+	ret = gpio_request(pdata->uart_rx_gpio, "UART_RX_GPIO");
+	if (unlikely(ret)) {
+		pr_err("gpio request failed for:%d\n",
+				pdata->uart_rx_gpio);
+		gpio_free(pdata->uart_tx_gpio);
+		goto exit_uart_config;
+	}
+
+exit_uart_config:
+	return ret;
+}
+
+/**
+ * msm_hs_unconfig_uart_tx_rx_gpios: Unconfigures UART Tx and RX GPIOs
+ * @port: uart port
+ */
+static void msm_hs_unconfig_uart_tx_rx_gpios(struct uart_port *uport)
+{
+	struct platform_device *pdev = to_platform_device(uport->dev);
+	const struct msm_serial_hs_platform_data *pdata =
+						pdev->dev.platform_data;
+
+
+	gpio_free(pdata->uart_tx_gpio);
+	gpio_free(pdata->uart_rx_gpio);
+
+}
+
+/**
+ * msm_hs_config_uart_hwflow_gpios: Configures UART HWFlow GPIOs
+ * @port: uart port
+ */
+static int msm_hs_config_uart_hwflow_gpios(struct uart_port *uport)
+{
+	struct platform_device *pdev = to_platform_device(uport->dev);
+	const struct msm_serial_hs_platform_data *pdata =
+						pdev->dev.platform_data;
+	int ret = -EINVAL;
+
+	ret = gpio_request(pdata->uart_cts_gpio, "UART_CTS_GPIO");
+	if (unlikely(ret)) {
+		pr_err("gpio request failed for:%d\n", pdata->uart_cts_gpio);
+		goto exit_config_uart;
+	}
+
+	ret = gpio_request(pdata->uart_rfr_gpio, "UART_RFR_GPIO");
+	if (unlikely(ret)) {
+		pr_err("gpio request failed for:%d\n", pdata->uart_rfr_gpio);
+		gpio_free(pdata->uart_cts_gpio);
+		goto exit_config_uart;
+	}
+
+exit_config_uart:
+	return ret;
+}
+
+/**
+ * msm_hs_unconfig_uart_hwflow_gpios: Unonfigures UART HWFlow GPIOs
+ * @port: uart port
+ */
+static void msm_hs_unconfig_uart_hwflow_gpios(struct uart_port *uport)
+{
+	struct platform_device *pdev = to_platform_device(uport->dev);
+	const struct msm_serial_hs_platform_data *pdata =
+						pdev->dev.platform_data;
+
+	gpio_free(pdata->uart_cts_gpio);
+	gpio_free(pdata->uart_rfr_gpio);
+
+}
+
+/**
+ * msm_hs_config_uart_gpios: Configures UART GPIOs and returns success or
+ * Failure
+ * @port: uart port
+ */
+static int msm_hs_config_uart_gpios(struct uart_port *uport)
+{
+	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
+	int ret;
+
+	/* Configure UART Tx and Rx GPIOs */
+	ret = msm_hs_config_uart_tx_rx_gpios(uport);
+	if (!ret) {
+		if (msm_uport->func_mode == UART_FOUR_WIRE) {
+			/*if 4-wire uart, configure CTS and RFR GPIOs */
+			ret = msm_hs_config_uart_hwflow_gpios(uport);
+			if (ret)
+				msm_hs_unconfig_uart_tx_rx_gpios(uport);
+		}
+	}
+
+	return ret;
+}
+
+/**
+ * msm_hs_unconfig_uart_gpios: Unconfigures UART GPIOs
+ * @port: uart port
+ */
+static void msm_hs_unconfig_uart_gpios(struct uart_port *port)
+{
+	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(port);
+
+	msm_hs_unconfig_uart_tx_rx_gpios(port);
+	if (msm_uport->func_mode == UART_FOUR_WIRE)
+		msm_hs_unconfig_uart_hwflow_gpios(port);
+}
+
 static int msm_hs_init_clk(struct uart_port *uport)
 {
 	int ret;
@@ -667,6 +807,7 @@ static void msm_hs_set_termios(struct uart_port *uport,
 	unsigned int bps;
 	unsigned long data;
 	unsigned long flags;
+	int ret;
 	unsigned int c_cflag = termios->c_cflag;
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 
@@ -775,8 +916,19 @@ static void msm_hs_set_termios(struct uart_port *uport,
 		 * dsb requires here.
 		 */
 		mb();
+		msm_uport->rx_discard_flush_issued = true;
 		/* do discard flush */
 		msm_dmov_flush(msm_uport->dma_rx_channel, 0);
+		spin_unlock_irqrestore(&uport->lock, flags);
+		pr_debug("%s(): wainting for flush completion.\n",
+							__func__);
+		ret = wait_event_timeout(msm_uport->rx.wait,
+			msm_uport->rx_discard_flush_issued == false,
+			RX_FLUSH_COMPLETE_TIMEOUT);
+		if (!ret)
+			pr_err("%s(): Discard flush completion pending.\n",
+								__func__);
+		spin_lock_irqsave(&uport->lock, flags);
 	}
 
 	msm_hs_write(uport, UARTDM_IMR_ADDR, msm_uport->imr_reg);
@@ -1182,8 +1334,23 @@ static void msm_hs_dmov_rx_callback(struct msm_dmov_cmd *cmd_ptr,
 					struct msm_dmov_errdata *err)
 {
 	struct msm_hs_port *msm_uport;
+	struct uart_port *uport;
+	unsigned long flags;
 
 	msm_uport = container_of(cmd_ptr, struct msm_hs_port, rx.xfer);
+	uport = &(msm_uport->uport);
+
+	pr_debug("%s(): called result:%x\n", __func__, result);
+	if (!(result & DMOV_RSLT_ERROR)) {
+		if (result & DMOV_RSLT_FLUSH) {
+			if (msm_uport->rx_discard_flush_issued) {
+				spin_lock_irqsave(&uport->lock, flags);
+				msm_uport->rx_discard_flush_issued = false;
+				spin_unlock_irqrestore(&uport->lock, flags);
+				wake_up(&msm_uport->rx.wait);
+			}
+		}
+	}
 
 	tasklet_schedule(&msm_uport->rx.tlet);
 }
@@ -1261,11 +1428,12 @@ static void msm_hs_enable_ms_locked(struct uart_port *uport)
 
 }
 
-static void msm_hs_flush_buffer(struct uart_port *uport)
+static void msm_hs_flush_buffer_locked(struct uart_port *uport)
 {
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 
-	msm_uport->tty_flush_receive = true;
+	if (msm_uport->tx.dma_in_flight)
+		msm_uport->tty_flush_receive = true;
 }
 
 /*
@@ -1328,6 +1496,7 @@ static int msm_hs_check_clock_off(struct uart_port *uport)
 {
 	unsigned long sr_status;
 	unsigned long flags;
+	int ret;
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 	struct circ_buf *tx_buf = &uport->state->xmit;
 
@@ -1375,10 +1544,23 @@ static int msm_hs_check_clock_off(struct uart_port *uport)
 	}
 
 	if (msm_uport->rx.flush != FLUSH_SHUTDOWN) {
-		if (msm_uport->rx.flush == FLUSH_NONE)
+		if (msm_uport->rx.flush == FLUSH_NONE) {
 			msm_hs_stop_rx_locked(uport);
+			msm_uport->rx_discard_flush_issued = true;
+		}
 
 		spin_unlock_irqrestore(&uport->lock, flags);
+		if (msm_uport->rx_discard_flush_issued) {
+			pr_debug("%s(): wainting for flush completion.\n",
+								__func__);
+			ret = wait_event_timeout(msm_uport->rx.wait,
+				msm_uport->rx_discard_flush_issued == false,
+				RX_FLUSH_COMPLETE_TIMEOUT);
+			if (!ret)
+				pr_err("%s(): Flush complete pending.\n",
+								__func__);
+		}
+
 		mutex_unlock(&msm_uport->clk_mutex);
 		return 0;  /* come back later to really clock off */
 	}
@@ -1678,9 +1860,13 @@ static int msm_hs_startup(struct uart_port *uport)
 		return ret;
 	}
 
-	if (pdata && pdata->gpio_config)
-		if (unlikely(pdata->gpio_config(1)))
-			dev_err(uport->dev, "Cannot configure gpios\n");
+	if (pdata && pdata->config_gpio) {
+		ret = msm_hs_config_uart_gpios(uport);
+		if (ret)
+			goto deinit_uart_clk;
+	} else {
+		pr_debug("%s(): UART GPIOs not specified.\n", __func__);
+	}
 
 	/* Set auto RFR Level */
 	data = msm_hs_read(uport, UARTDM_MR1_ADDR);
@@ -1747,7 +1933,7 @@ static int msm_hs_startup(struct uart_port *uport)
 		ret = irq_set_irq_wake(msm_uport->wakeup.irq, 1);
 		if (unlikely(ret)) {
 			pr_err("%s():Err setting wakeup irq\n", __func__);
-			goto deinit_uart_clk;
+			goto unconfigure_uart_gpio;
 		}
 	}
 
@@ -1787,6 +1973,9 @@ free_uart_irq:
 	free_irq(uport->irq, msm_uport);
 free_wake_irq:
 	irq_set_irq_wake(msm_uport->wakeup.irq, 0);
+unconfigure_uart_gpio:
+	if (pdata && pdata->config_gpio)
+		msm_hs_unconfig_uart_gpios(uport);
 deinit_uart_clk:
 	clk_disable_unprepare(msm_uport->clk);
 	if (msm_uport->pclk)
@@ -1962,6 +2151,38 @@ static int __devinit msm_hs_probe(struct platform_device *pdev)
 		if (unlikely(msm_uport->wakeup.irq < 0))
 			return -ENXIO;
 
+	}
+
+	/* Identify UART functional mode as 2-wire or 4-wire. */
+	if (pdata && pdata->config_gpio) {
+		switch (pdata->config_gpio) {
+		case 4:
+			if (gpio_is_valid(pdata->uart_tx_gpio)
+				&& gpio_is_valid(pdata->uart_rx_gpio)
+				&& gpio_is_valid(pdata->uart_cts_gpio)
+				&& gpio_is_valid(pdata->uart_rfr_gpio)) {
+					msm_uport->func_mode = UART_FOUR_WIRE;
+			} else {
+				pr_err("%s(): Wrong GPIO Number for 4-Wire.\n",
+								__func__);
+				return -EINVAL;
+			}
+			break;
+		case 2:
+			if (gpio_is_valid(pdata->uart_tx_gpio)
+				&& gpio_is_valid(pdata->uart_rx_gpio)) {
+					msm_uport->func_mode = UART_TWO_WIRE;
+			} else {
+				pr_err("%s(): Wrong GPIO Number for 2-Wire.\n",
+								__func__);
+				return -EINVAL;
+			}
+			break;
+		default:
+			pr_err("%s(): Invalid number of GPIOs.\n", __func__);
+			pdata->config_gpio = 0;
+			return -EINVAL;
+		}
 	}
 
 	resource = platform_get_resource_byname(pdev, IORESOURCE_DMA,
@@ -2165,9 +2386,8 @@ static void msm_hs_shutdown(struct uart_port *uport)
 	if (use_low_power_wakeup(msm_uport))
 		free_irq(msm_uport->wakeup.irq, msm_uport);
 
-	if (pdata && pdata->gpio_config)
-		if (pdata->gpio_config(0))
-			dev_err(uport->dev, "GPIO config error\n");
+	if (pdata && pdata->config_gpio)
+			msm_hs_unconfig_uart_gpios(uport);
 }
 
 static void __exit msm_serial_hs_exit(void)
@@ -2244,7 +2464,7 @@ static struct uart_ops msm_hs_ops = {
 	.config_port = msm_hs_config_port,
 	.release_port = msm_hs_release_port,
 	.request_port = msm_hs_request_port,
-	.flush_buffer = msm_hs_flush_buffer,
+	.flush_buffer = msm_hs_flush_buffer_locked,
 };
 
 module_init(msm_serial_hs_init);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2002,2007-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -114,6 +114,7 @@ struct kgsl_pagetable {
 	} stats;
 	const struct kgsl_mmu_pt_ops *pt_ops;
 	unsigned int tlb_flags;
+	unsigned int fault_addr;
 	void *priv;
 };
 
@@ -210,6 +211,8 @@ void kgsl_setstate(struct kgsl_mmu *mmu, unsigned int context_id,
 			uint32_t flags);
 int kgsl_mmu_get_ptname_from_ptbase(struct kgsl_mmu *mmu,
 					unsigned int pt_base);
+unsigned int kgsl_mmu_log_fault_addr(struct kgsl_mmu *mmu,
+			unsigned int pt_base, unsigned int addr);
 int kgsl_mmu_pt_get_flags(struct kgsl_pagetable *pt,
 			enum kgsl_deviceid id);
 void kgsl_mmu_ptpool_destroy(void *ptpool);
