@@ -35,7 +35,7 @@
 #include <linux/platform_data/qcom_crypto_device.h>
 #include <linux/platform_data/qcom_wcnss_device.h>
 #include <linux/leds.h>
-#include <linux/leds-pm8xxx.h>
+#include <linux/leds-pm8xxx-htc.h>
 #include <linux/msm_tsens.h>
 #include <linux/proc_fs.h>
 #include <linux/cm3629.h>
@@ -117,7 +117,7 @@
 #ifdef CONFIG_HTC_BATT_8960
 #include "mach/htc_battery_8960.h"
 #include "mach/htc_battery_cell.h"
-#include "linux/mfd/pm8xxx/pm8921-charger.h"
+#include "linux/mfd/pm8xxx/pm8921-charger-htc.h"
 #endif
 
 #ifdef CONFIG_PERFLOCK

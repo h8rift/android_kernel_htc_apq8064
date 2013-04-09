@@ -4,7 +4,7 @@
 #include <linux/bootmem.h>
 #include <linux/mfd/pm8xxx/pm8921.h>
 #include <linux/leds.h>
-#include <linux/leds-pm8xxx.h>
+#include <linux/leds-pm8xxx-htc.h>
 #include <linux/mfd/pm8xxx/pm8xxx-adc.h>
 #include <asm/mach-types.h>
 #include <asm/mach/mmc.h>

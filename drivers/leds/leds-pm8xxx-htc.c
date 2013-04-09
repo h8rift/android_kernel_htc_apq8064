@@ -24,7 +24,7 @@
 
 #include <linux/mfd/pm8xxx/core.h>
 #include <linux/mfd/pm8xxx/pwm.h>
-#include <linux/leds-pm8xxx.h>
+#include <linux/leds-pm8xxx-htc.h>
 #include <linux/wakelock.h>
 
 
