@@ -179,7 +179,7 @@ static int __init mipi_video_auo_hd720p_init(void)
   pinfo.mipi.t_clk_pre = 0x21;	/* 660Mhz: 30 */
   pinfo.mipi.stream = 0;	/* dma_p */
   pinfo.mipi.dma_trigger = DSI_CMD_TRIGGER_SW;
-  pinfo.mipi.frame_rate = 60;
+  pinfo.mipi.frame_rate = 63;
   pinfo.mipi.dsi_phy_db = &nova_dsi_video_mode_phy_db;
   
   ret = mipi_jet_device_register(&pinfo, MIPI_DSI_PRIM,
@@ -207,7 +207,7 @@ static int __init mipi_video_sony_hd720p_init(void)
 #endif
   pinfo.lcd.vsync_enable = TRUE;
   pinfo.lcd.hw_vsync_mode = TRUE;
-  pinfo.lcd.refx100 = 6096; /* adjust refx100 to prevent tearing */
+  pinfo.lcd.refx100 = 5700; /* adjust refx100 to prevent tearing */
   pinfo.mipi.te_sel = 1; /* TE from vsycn gpio */
   pinfo.mipi.interleave_max = 1;
   pinfo.mipi.insert_dcs_cmd = TRUE;
@@ -272,7 +272,7 @@ static int __init mipi_video_sony_hd720p_init(void)
   pinfo.mipi.t_clk_pre = 0x21;
   pinfo.mipi.stream = 0;	/* dma_p */
   pinfo.mipi.dma_trigger = DSI_CMD_TRIGGER_SW;
-  pinfo.mipi.frame_rate = 60;
+  pinfo.mipi.frame_rate = 59;
   pinfo.mipi.dsi_phy_db = &nova_dsi_video_mode_phy_db;
   
   ret = mipi_jet_device_register(&pinfo, MIPI_DSI_PRIM,

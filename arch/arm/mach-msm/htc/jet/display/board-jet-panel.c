@@ -26,11 +26,11 @@
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MSM_FB_PRIM_BUF_SIZE \
 		(roundup((roundup(1280, 32) * roundup(720, 32) * 4), 4096) * 3)
-			
+
 #else
 #define MSM_FB_PRIM_BUF_SIZE \
 		(roundup((roundup(1280, 32) * roundup(720, 32) * 4), 4096) * 2)
-			
+
 #endif
 
 #define MSM_FB_SIZE roundup(MSM_FB_PRIM_BUF_SIZE, 4096)
@@ -346,13 +346,16 @@ static struct msm_bus_scale_pdata mdp_bus_scale_pdata = {
 
 int mdp_core_clk_rate_table[] = {
   85330000,
-  85330000,
+  96000000,
   160000000,
   200000000,
 };
 
 static struct msm_panel_common_pdata mdp_pdata = {
   .gpio = JET_GPIO_LCD_TE,
+	.mdp_core_clk_rate = 85330000,
+	.mdp_core_clk_table = mdp_core_clk_rate_table,
+	.num_mdp_clk = ARRAY_SIZE(mdp_core_clk_rate_table),
 #ifdef CONFIG_MSM_BUS_SCALING
   .mdp_bus_scale_table = &mdp_bus_scale_pdata,
 #endif
@@ -449,7 +452,7 @@ static struct platform_device wfd_device = {
 #ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
 static int hdmi_enable_5v(int on)
 {
-	
+
 	static struct regulator *reg_8921_hdmi_mvs;	
 	static int prev_on;
 	int rc;
@@ -498,7 +501,7 @@ static int hdmi_core_power(int on, int show)
 	if (on == prev_on)
 		return 0;
 
-	
+
 	if (!reg_8921_l23) {
 		reg_8921_l23 = regulator_get(&hdmi_msm_device.dev, "hdmi_avdd");
 		if (IS_ERR(reg_8921_l23)) {

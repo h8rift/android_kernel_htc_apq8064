@@ -386,6 +386,9 @@ struct msm_panel_common_pdata {
 	void (*panel_config_gpio)(int);
 	int (*vga_switch)(int select_vga);
 	int *gpio_num;
+	int mdp_core_clk_rate;
+	unsigned num_mdp_clk;
+	int *mdp_core_clk_table;
 	u32 mdp_max_clk;
 	u32 mdp_max_bw;
 	u32 mdp_bw_ab_factor;
