@@ -55,6 +55,29 @@ static struct gpio_event_direct_entry jet_keypad_map[] = {
 	},
 };
 
+static uint32_t matirx_inputs_gpio_table[] = {
+	GPIO_CFG(JET_GPIO_PWR_KEYz, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_UP,
+		 GPIO_CFG_2MA),
+	GPIO_CFG(JET_GPIO_VOL_UPz, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_UP,
+		 GPIO_CFG_2MA),
+	GPIO_CFG(JET_GPIO_VOL_DOWNz, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_UP,
+		 GPIO_CFG_2MA),
+	GPIO_CFG(JET_GPIO_CAM_STEP_1, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_UP,
+		 GPIO_CFG_2MA),
+	GPIO_CFG(JET_GPIO_CAM_STEP_2, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_UP,
+		 GPIO_CFG_2MA),
+};
+
+static void jet_direct_inputs_gpio(void)
+{
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(matirx_inputs_gpio_table); i++)
+		gpio_tlmm_config(matirx_inputs_gpio_table[i], GPIO_CFG_ENABLE);
+
+	return;
+}
+
 static struct gpio_event_input_info jet_keypad_power_info = {
 	.info.func = gpio_event_input_func,
 	.flags = GPIOEDF_PRINT_KEYS,
@@ -66,6 +89,7 @@ static struct gpio_event_input_info jet_keypad_power_info = {
 # endif
 	.keymap = jet_keypad_map,
 	.keymap_size = ARRAY_SIZE(jet_keypad_map),
+	.setup_input_gpio = jet_direct_inputs_gpio,
 };
 
 static struct gpio_event_info *jet_keypad_info[] = {

@@ -56,7 +56,7 @@
 #include "mldl_cfg.h"
 #include "mpu.h"
 
-#define MPU3050_EARLY_SUSPEND_IN_DRIVER 0
+#define MPU3050_EARLY_SUSPEND_IN_DRIVER 1
 
 #define D(x...) printk(KERN_DEBUG "[GYRO][MPU3050] " x)
 #define I(x...) printk(KERN_INFO "[GYRO][MPU3050] " x)

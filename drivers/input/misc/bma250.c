@@ -24,7 +24,7 @@
 #include <linux/delay.h>
 #include <linux/earlysuspend.h>
 
-/*#define EARLY_SUSPEND_BMA 1*/
+#define EARLY_SUSPEND_BMA 1
 
 #define D(x...) pr_info("[GSNR][BMA250] " x)
 #define E(x...) printk(KERN_ERR "[GSNR][BMA250 ERROR] " x)
