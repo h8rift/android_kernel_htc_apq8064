@@ -93,6 +93,29 @@ static int hdmi_msm_read_edid(void);
 static void hdmi_msm_hpd_off(void);
 static boolean hdmi_msm_is_dvi_mode(void);
 
+#ifdef CONFIG_FB_MSM_HDMI_MHL_SII9234
+void fake_plug(bool plug)
+{
+	DEV_INFO("HDMI %s %s\n", __func__, (plug)? "HDMI_CONNECTED" : "HDMI_DISCONNECTED");
+
+	if (plug) {
+		kobject_uevent(external_common_state->uevent_kobj,
+				KOBJ_ONLINE);
+		switch_set_state(&external_common_state->sdev, 1);
+	} else {
+		kobject_uevent(external_common_state->uevent_kobj,
+				KOBJ_OFFLINE);
+		switch_set_state(&external_common_state->sdev, 0);
+	}
+}
+
+static void mhl_status_notifier_func(bool isMHL, int charging_type)
+{
+       if(!isMHL)
+			switch_set_state(&external_common_state->sdev, 0);
+}
+#endif
+
 #ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL_CEC_SUPPORT
 
 static void hdmi_msm_cec_line_latch_detect(void);
@@ -620,6 +643,14 @@ void hdmi_msm_cec_one_touch_play(void)
 
 }
 #endif /* CONFIG_FB_MSM_HDMI_MSM_PANEL_CEC_SUPPORT */
+
+void hdmi_set_switch_state(bool enable)
+{
+	if(!enable)
+		switch_set_state(&external_common_state->sdev, 0);
+	DEV_INFO("%s, %s\n", __func__, (enable)? "on" : "off");
+
+}
 
 uint32 hdmi_msm_get_io_base(void)
 {
@@ -4516,6 +4547,29 @@ error:
 	return ret;
 }
 
+void hdmi_hpd_feature(int enable)
+{
+	if (external_common_state->hpd_feature) {
+		if (enable) {
+			external_common_state->hpd_feature(1);
+			mutex_lock(&external_common_state_hpd_mutex);
+			external_common_state->hpd_feature_on = 1;
+			mutex_unlock(&external_common_state_hpd_mutex);
+		} else {
+			if (hdmi_msm_state->panel_power_on == FALSE) {
+				external_common_state->hpd_feature(0);
+				DEV_INFO("HDMI HPD: sense DISCONNECTED: send OFFLINE\n");
+				switch_set_state(&external_common_state->sdev, 0);
+				kobject_uevent(external_common_state->uevent_kobj,
+					KOBJ_OFFLINE);
+			}
+			mutex_lock(&external_common_state_hpd_mutex);
+			external_common_state->hpd_feature_on = 0;
+			mutex_unlock(&external_common_state_hpd_mutex);
+		}
+	}
+}
+
 void hdmi_msm_config_hdcp_feature(void)
 {
 	if (hdcp_feature_on && hdmi_msm_has_hdcp()) {
@@ -4826,6 +4880,13 @@ static struct platform_device this_device = {
 	.dev.platform_data = &hdmi_msm_panel_data,
 };
 
+#ifdef CONFIG_FB_MSM_HDMI_MHL_SII9234
+static struct t_mhl_status_notifier mhl_status_notifier = {
+       .name = "mhl_detect",
+       .func = mhl_status_notifier_func,
+};
+#endif
+
 static int __init hdmi_msm_init(void)
 {
 	int rc;
@@ -4883,6 +4944,10 @@ static int __init hdmi_msm_init(void)
 	*/
 	hdmi_work_queue = create_workqueue("hdmi_hdcp");
 	external_common_state->hpd_feature = hdmi_msm_hpd_feature;
+
+#if (defined(CONFIG_CABLE_DETECT_ACCESSORY) && defined(CONFIG_FB_MSM_HDMI_MHL_SII9234))
+       mhl_detect_register_notifier(&mhl_status_notifier);
+#endif
 
 	rc = platform_driver_register(&this_driver);
 	if (rc) {
