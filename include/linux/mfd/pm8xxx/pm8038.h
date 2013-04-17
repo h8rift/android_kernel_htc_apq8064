@@ -28,9 +28,15 @@
 #include <linux/mfd/pm8xxx/misc.h>
 #include <linux/regulator/pm8xxx-regulator.h>
 #include <linux/mfd/pm8xxx/pm8xxx-adc.h>
+#ifdef CONFIG_MACH_HTC
+#include <linux/mfd/pm8xxx/pm8921-charger-htc.h>
+#include <linux/mfd/pm8xxx/pm8921-bms-htc.h>
+#include <linux/leds-pm8xxx-htc.h>
+#else
 #include <linux/mfd/pm8xxx/pm8921-charger.h>
 #include <linux/mfd/pm8xxx/pm8921-bms.h>
 #include <linux/leds-pm8xxx.h>
+#endif
 #include <linux/mfd/pm8xxx/ccadc.h>
 #include <linux/mfd/pm8xxx/spk.h>
 #include <linux/mfd/pm8xxx/tm.h>
