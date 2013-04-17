@@ -701,6 +701,37 @@ config VP_A1028
 	help
 	 A1028 Voice Processor Driver implemented by HTC.
 
+config AMP_TPA6185
+        tristate "TI TPA6185 AMP Driver"
+	depends on I2C=y
+        help
+          TI TPA6185 AMP Driver implemented by HTC.
+
+config AMP_RT5501
+        tristate "TI RT5501 AMP Driver"
+	depends on I2C=y
+        help
+          TI RT5501 AMP Driver implemented by HTC.
+
+config AMP_TFA9887
+        tristate "NXP TFA9887 Speaker AMP Driver"
+	depends on I2C=y
+        help
+         NXP TFA9887 Speaker AMP Driver implemented by HTC.
+
+config AMP_TFA9887L
+        tristate "NXP TFA9887L Speaker AMP Driver"
+	depends on I2C=y
+        help
+         NXP TFA9887L Speaker AMP Driver implemented by HTC.
+
+config AMP_TPA2051D3_ON_GPIO
+	tristate "TI TPA2051D3 Speaker AMP Driver on gpio"
+	depends on AMP_TPA2051D3
+	default n
+	help
+	 TI TPA2051D3_ON_GPIO Speaker AMP Driver implemented by HTC.
+
 config BU52031NVX
 	tristate "Cradle BU52031NVX support"
 	depends on MFD_PM8XXX
