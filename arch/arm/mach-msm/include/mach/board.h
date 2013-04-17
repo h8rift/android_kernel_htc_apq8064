@@ -652,6 +652,14 @@ struct t_cable_status_notifier{
 };
 int cable_detect_register_notifier(struct t_cable_status_notifier *);
 static LIST_HEAD(g_lh_cable_detect_notifier_list);
+
+struct t_mhl_status_notifier{
+	struct list_head mhl_notifier_link;
+	const char *name;
+	void (*func)(bool isMHL, int charging_type);
+};
+int mhl_detect_register_notifier(struct t_mhl_status_notifier *);
+static LIST_HEAD(g_lh_mhl_detect_notifier_list);
 #endif
 
 void msm_snddev_init(void);
