@@ -22,6 +22,7 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/platform_data/ram_console.h>
+#include <asm/setup.h>
 
 #ifdef CONFIG_ANDROID_RAM_CONSOLE_ERROR_CORRECTION
 #include <linux/rslib.h>
@@ -34,7 +35,7 @@ struct ram_console_buffer {
 	uint8_t     data[0];
 };
 
-#define RAM_CONSOLE_SIG (0x43474244) /* DBGC */
+#define RAM_CONSOLE_SIG (0x43474244)
 
 #ifdef CONFIG_ANDROID_RAM_CONSOLE_EARLY_INIT
 static char __initdata
@@ -61,7 +62,7 @@ static void ram_console_encode_rs8(uint8_t *data, size_t len, uint8_t *ecc)
 {
 	int i;
 	uint16_t par[ECC_SIZE];
-	/* Initialize the parity buffer */
+
 	memset(par, 0, sizeof(par));
 	encode_rs8(ram_console_rs_decoder, data, len, par, 0);
 	for (i = 0; i < ECC_SIZE; i++)
@@ -193,7 +194,35 @@ static int __init pmic_start_on_event(char *opt)
 __setup("poweron_status=", pmic_start_on_event);
 #endif
 
-static void __devinit
+
+#ifdef CONFIG_DEBUG_BLDR_LOG
+static char *bldr_log;
+static unsigned long bldr_log_start = 0;
+static unsigned long bldr_log_size = 0;
+static int __init parse_tag_bldr_log(const struct tag *tag)
+{
+	bldr_log_start = tag->u.bldr_log.addr;
+	bldr_log_size =  tag->u.bldr_log.size;
+	return 0;
+}
+
+__tagtable(ATAG_BLDR_LOG, parse_tag_bldr_log);
+
+static char *last_bldr_log;
+static unsigned long last_bldr_log_start = 0;
+static unsigned long last_bldr_log_size = 0;
+static int __init parse_tag_last_bldr_log(const struct tag *tag)
+{
+	last_bldr_log_start = tag->u.last_bldr_log.addr;
+	last_bldr_log_size =  tag->u.last_bldr_log.size;
+	return 0;
+}
+
+__tagtable(ATAG_LAST_BLDR_LOG, parse_tag_last_bldr_log);
+
+#endif
+
+static void __init
 ram_console_save_old(struct ram_console_buffer *buffer, const char *bootinfo,
 	char *dest)
 {
@@ -297,7 +326,7 @@ ram_console_save_old(struct ram_console_buffer *buffer, const char *bootinfo,
 #endif
 }
 
-static int __devinit ram_console_init(struct ram_console_buffer *buffer,
+static int __init ram_console_init(struct ram_console_buffer *buffer,
 				   size_t buffer_size, const char *bootinfo,
 				   char *old_buf)
 {
@@ -330,9 +359,6 @@ static int __devinit ram_console_init(struct ram_console_buffer *buffer,
 	ram_console_par_buffer = buffer->data + ram_console_buffer_size;
 
 
-	/* first consecutive root is 0
-	 * primitive element to generate roots = 1
-	 */
 	ram_console_rs_decoder = init_rs(ECC_SYMSIZE, ECC_POLY, 0, 1, ECC_SIZE);
 	if (ram_console_rs_decoder == NULL) {
 		printk(KERN_INFO "[K] ram_console: init_rs failed\n");
@@ -394,7 +420,7 @@ static int __init ram_console_early_init(void)
 		ram_console_old_log_init_buffer);
 }
 #else
-static int __devinit ram_console_driver_probe(struct platform_device *pdev)
+static int ram_console_driver_probe(struct platform_device *pdev)
 {
 	struct resource *res = pdev->resource;
 	size_t start;
@@ -402,6 +428,28 @@ static int __devinit ram_console_driver_probe(struct platform_device *pdev)
 	void *buffer;
 	const char *bootinfo = NULL;
 	struct ram_console_platform_data *pdata = pdev->dev.platform_data;
+
+#ifdef CONFIG_DEBUG_BLDR_LOG
+	if (bldr_log_start && bldr_log_size) {
+		bldr_log = ioremap(bldr_log_start, bldr_log_size);
+		if (bldr_log == NULL) {
+			printk(KERN_ERR "[K] hboot log: failed to map memory\n");
+			return -ENOMEM;
+		}
+
+		printk(KERN_INFO "[K] hboot log buffer: got buffer at %lx, size %lx\n", bldr_log_start, bldr_log_size);
+	}
+
+	if (last_bldr_log_start && last_bldr_log_size) {
+		last_bldr_log = ioremap(last_bldr_log_start, last_bldr_log_size);
+		if (last_bldr_log == NULL) {
+			printk(KERN_ERR "[K] last hboot log: failed to map memory\n");
+			return -ENOMEM;
+		}
+
+		printk(KERN_INFO "[K] last hboot log buffer: got buffer at %lx, size %lx\n", last_bldr_log_start, last_bldr_log_size);
+	}
+#endif
 
 	if (res == NULL || pdev->num_resources != 1 ||
 	    !(res->flags & IORESOURCE_MEM)) {
@@ -422,7 +470,7 @@ static int __devinit ram_console_driver_probe(struct platform_device *pdev)
 	if (pdata)
 		bootinfo = pdata->bootinfo;
 
-	return ram_console_init(buffer, buffer_size, bootinfo, NULL/* allocate */);
+	return ram_console_init(buffer, buffer_size, bootinfo, NULL);
 }
 
 static struct platform_driver ram_console_driver = {
@@ -446,6 +494,40 @@ static ssize_t ram_console_read_old(struct file *file, char __user *buf,
 	loff_t pos = *offset;
 	ssize_t count;
 
+#ifdef CONFIG_DEBUG_BLDR_LOG
+	loff_t bootloader_pos;
+	loff_t ram_console_pos;
+	if (pos >= last_bldr_log_size + ram_console_old_log_size + bldr_log_size)
+		return 0;
+
+	if (pos >= last_bldr_log_size + ram_console_old_log_size) {
+
+		bootloader_pos = pos - (last_bldr_log_size + ram_console_old_log_size);
+		count = min(len, (size_t)(bldr_log_size - bootloader_pos));
+		if (copy_to_user(buf, bldr_log + bootloader_pos, count))
+			return -EFAULT;
+
+		*offset += count;
+		return count;
+	}
+
+	if (pos >= last_bldr_log_size) {
+		ram_console_pos = pos - last_bldr_log_size;
+		count = min(len, (size_t)(ram_console_old_log_size - ram_console_pos));
+		if (copy_to_user(buf, ram_console_old_log + ram_console_pos, count))
+			return -EFAULT;
+
+		*offset += count;
+		return count;
+	}
+
+	count = min(len, (size_t)(last_bldr_log_size - pos));
+	if (copy_to_user(buf, last_bldr_log + pos, count))
+		return -EFAULT;
+
+	*offset += count;
+	return count;
+#else
 	if (pos >= ram_console_old_log_size)
 		return 0;
 
@@ -455,6 +537,7 @@ static ssize_t ram_console_read_old(struct file *file, char __user *buf,
 
 	*offset += count;
 	return count;
+#endif
 }
 
 static const struct file_operations ram_console_file_ops = {
