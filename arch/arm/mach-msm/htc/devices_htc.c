@@ -504,7 +504,11 @@ int board_get_usb_ats(void)
 }
 EXPORT_SYMBOL(board_get_usb_ats);
 
+#ifdef CONFIG_MSM8960_ONLY
 #define MSM_RAM_CONSOLE_BASE   0x88900000
+#else
+#define MSM_RAM_CONSOLE_BASE    0x8F100000
+#endif
 #define MSM_RAM_CONSOLE_SIZE   (SZ_1M - SZ_128K) /* 128K for debug info */
 
 static struct resource ram_console_resources[] = {
