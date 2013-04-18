@@ -220,7 +220,10 @@ struct msm_otg_platform_data {
 	bool mhl_enable;
 	bool disable_reset_on_disconnect;
 #ifdef CONFIG_MACH_HTC
+	char *ldo_3v3_name;
+	char *ldo_1v8_name;
         bool enable_dcd;
+	char *vddcx_name;
 #endif
 	bool enable_lpm_on_dev_suspend;
 	bool core_clk_always_on_workaround;
@@ -352,7 +355,11 @@ struct msm_otg {
 #endif
 	enum usb_chg_state chg_state;
 	enum usb_chg_type chg_type;
+#ifdef CONFIG_MACH_HTC
+	u8 dcd_retries;
+#else
 	unsigned dcd_time;
+#endif
 	struct wake_lock wlock;
 #ifdef CONFIG_MACH_HTC
 	struct wake_lock usb_otg_wlock;

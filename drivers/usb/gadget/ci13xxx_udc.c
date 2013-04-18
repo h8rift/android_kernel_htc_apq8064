@@ -68,6 +68,9 @@
 #include <linux/usb/msm_hsusb.h>
 
 #include "ci13xxx_udc.h"
+#ifdef CONFIG_MACH_HTC
+#include <mach/htc_battery_common.h>
+#endif
 
 /* Turns on streaming. overrides CI13XXX_DISABLE_STREAMING */
 static unsigned int streaming;
@@ -1756,6 +1759,14 @@ static inline u8 _usb_addr(struct ci13xxx_ep *ep)
 	return ((ep->dir == TX) ? USB_ENDPOINT_DIR_MASK : 0) | ep->num;
 }
 
+#ifdef CONFIG_MACH_HTC
+static void usb_chg_stop(struct work_struct *w)
+{
+	USB_INFO("disable charger\n");
+	htc_battery_charger_disable();
+}
+#endif
+
 static void ep_prime_timer_func(unsigned long data)
 {
 	struct ci13xxx_ep *mep = (struct ci13xxx_ep *)data;
@@ -2544,6 +2555,9 @@ __acquires(udc->lock)
 {
 	unsigned i;
 	u8 tmode = 0;
+#ifdef CONFIG_MACH_HTC
+	struct usb_info *ui = the_usb_info;
+#endif
 
 	trace("%p", udc);
 
@@ -2704,6 +2718,10 @@ __acquires(udc->lock)
 					case TEST_K:
 					case TEST_SE0_NAK:
 					case TEST_PACKET:
+#ifdef CONFIG_MACH_HTC
+						if (!udc->test_mode)
+							schedule_delayed_work(&ui->chg_stop, 0);
+#endif
 					case TEST_FORCE_EN:
 						udc->test_mode = tmode;
 						err = isr_setup_status_phase(
@@ -3540,6 +3558,10 @@ static irqreturn_t udc_irq(void)
 		if (USBi_URI & intr) {
 			isr_statistics.uri++;
 			isr_reset_handler(udc);
+#ifdef CONFIG_MACH_HTC
+			if (udc->transceiver)
+				udc->transceiver->notify_usb_attached();
+#endif
 		}
 		if (USBi_PCI & intr) {
 			isr_statistics.pci++;

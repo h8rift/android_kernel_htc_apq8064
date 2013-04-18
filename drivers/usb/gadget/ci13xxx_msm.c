@@ -18,6 +18,8 @@
 #include <linux/usb/ulpi.h>
 #include <linux/gpio.h>
 
+#include <linux/usb/htc_info.h>
+static struct usb_info *the_usb_info;
 #include "ci13xxx_udc.c"
 
 #define MSM_USB_BASE	(udc->regs)
@@ -39,7 +41,6 @@ static irqreturn_t msm_udc_irq(int irq, void *data)
 
 static void ci13xxx_msm_suspend(void)
 {
-	struct device *dev = _udc->gadget.dev.parent;
 	dev_dbg(dev, "ci13xxx_msm_suspend\n");
 
 	if (_udc_ctxt.wake_irq && !_udc_ctxt.wake_irq_state) {
@@ -51,7 +52,6 @@ static void ci13xxx_msm_suspend(void)
 
 static void ci13xxx_msm_resume(void)
 {
-	struct device *dev = _udc->gadget.dev.parent;
 	dev_dbg(dev, "ci13xxx_msm_resume\n");
 
 	if (_udc_ctxt.wake_irq && _udc_ctxt.wake_irq_state) {
@@ -63,8 +63,6 @@ static void ci13xxx_msm_resume(void)
 
 static void ci13xxx_msm_notify_event(struct ci13xxx *udc, unsigned event)
 {
-	struct device *dev = udc->gadget.dev.parent;
-
 	switch (event) {
 	case CI13XXX_CONTROLLER_RESET_EVENT:
 		dev_info(dev, "CI13XXX_CONTROLLER_RESET_EVENT received\n");
@@ -164,8 +162,17 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	int ret;
+#ifdef CONFIG_MACH_HTC
+	struct usb_info *ui;
+#endif
 
 	dev_dbg(&pdev->dev, "ci13xxx_msm_probe\n");
+#ifdef CONFIG_MACH_HTC
+	ui = kzalloc(sizeof(struct usb_info), GFP_KERNEL);
+	if (!ui)
+		return -ENOMEM;
+	the_usb_info = ui;
+#endif
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
@@ -207,6 +214,9 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "request_irq failed\n");
 		goto gpio_uninstall;
 	}
+#ifdef CONFIG_MACH_HTC
+	INIT_DELAYED_WORK(&ui->chg_stop, usb_chg_stop);
+#endif
 
 	pm_runtime_no_callbacks(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);

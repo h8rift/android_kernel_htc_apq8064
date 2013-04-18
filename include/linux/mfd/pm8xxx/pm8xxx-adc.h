@@ -104,6 +104,8 @@ enum pm8xxx_adc_channels {
 #define PM8XXX_CHANNEL_MPP_SCALE1_IDX	20
 #define PM8XXX_CHANNEL_MPP_SCALE3_IDX	40
 
+#define PM8XXX_AMUX_MPP_1	0x1
+#define PM8XXX_AMUX_MPP_2	0x2
 #define PM8XXX_AMUX_MPP_3	0x3
 #define PM8XXX_AMUX_MPP_4	0x4
 #define PM8XXX_AMUX_MPP_5	0x5
