@@ -140,7 +140,7 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_UPS,
 	POWER_SUPPLY_TYPE_MAINS,
 	POWER_SUPPLY_TYPE_USB,		/* Standard Downstream Port */
-#ifdef CONFIG_MACH_HTC
+#if defined(CONFIG_MACH_HTC) || defined(CONFIG_WIRELESS_CHARGER)
 	POWER_SUPPLY_TYPE_WIRELESS,
 #endif
 	POWER_SUPPLY_TYPE_USB_DCP,	/* Dedicated Charging Port */

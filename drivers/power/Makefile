@@ -63,5 +63,7 @@ obj-$(CONFIG_PM8921_CHARGER)	+= pm8921-charger.o
 endif
 obj-$(CONFIG_LTC4088_CHARGER)	+= ltc4088-charger.o
 obj-$(CONFIG_CHARGER_SMB347)	+= smb347-charger.o
+obj-$(CONFIG_BQ51051B_CHARGER)	+= bq51051b_charger.o
+obj-$(CONFIG_BATTERY_TEMP_CONTROL) += battery_temp_ctrl.o
 obj-$(CONFIG_BATTERY_BCL)	+= battery_current_limit.o
 obj-$(CONFIG_AMP_RT5501)	+= pm8921-audio.o
