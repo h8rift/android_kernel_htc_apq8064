@@ -44,6 +44,7 @@ static irqreturn_t msm_udc_irq(int irq, void *data)
 static void ci13xxx_msm_suspend(void)
 {
         struct device *dev = _udc->gadget.dev.parent;
+        (void)dev; // Hack if dev_dbg doesn't do anything, will throw a warning ..
 	dev_dbg(dev, "ci13xxx_msm_suspend\n");
 
 	if (_udc_ctxt.wake_irq && !_udc_ctxt.wake_irq_state) {
@@ -56,6 +57,7 @@ static void ci13xxx_msm_suspend(void)
 static void ci13xxx_msm_resume(void)
 {
         struct device *dev = _udc->gadget.dev.parent;
+        (void)dev; // Hack if dev_dbg doesn't do anything, will throw a warning ..
 	dev_dbg(dev, "ci13xxx_msm_resume\n");
 
 	if (_udc_ctxt.wake_irq && _udc_ctxt.wake_irq_state) {
@@ -68,6 +70,7 @@ static void ci13xxx_msm_resume(void)
 static void ci13xxx_msm_notify_event(struct ci13xxx *udc, unsigned event)
 {
         struct device *dev = _udc->gadget.dev.parent;
+        (void)dev; // Hack if dev_dbg doesn't do anything, will throw a warning ..
 
 	switch (event) {
 	case CI13XXX_CONTROLLER_RESET_EVENT:
