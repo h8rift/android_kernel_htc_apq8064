@@ -18,8 +18,10 @@
 #include <linux/usb/ulpi.h>
 #include <linux/gpio.h>
 
+#ifdef CONFIG_MACH_HTC
 #include <linux/usb/htc_info.h>
 static struct usb_info *the_usb_info;
+#endif
 #include "ci13xxx_udc.c"
 
 #define MSM_USB_BASE	(udc->regs)
@@ -41,6 +43,7 @@ static irqreturn_t msm_udc_irq(int irq, void *data)
 
 static void ci13xxx_msm_suspend(void)
 {
+        struct device *dev = _udc->gadget.dev.parent;
 	dev_dbg(dev, "ci13xxx_msm_suspend\n");
 
 	if (_udc_ctxt.wake_irq && !_udc_ctxt.wake_irq_state) {
@@ -52,6 +55,7 @@ static void ci13xxx_msm_suspend(void)
 
 static void ci13xxx_msm_resume(void)
 {
+        struct device *dev = _udc->gadget.dev.parent;
 	dev_dbg(dev, "ci13xxx_msm_resume\n");
 
 	if (_udc_ctxt.wake_irq && _udc_ctxt.wake_irq_state) {
@@ -63,6 +67,8 @@ static void ci13xxx_msm_resume(void)
 
 static void ci13xxx_msm_notify_event(struct ci13xxx *udc, unsigned event)
 {
+        struct device *dev = _udc->gadget.dev.parent;
+
 	switch (event) {
 	case CI13XXX_CONTROLLER_RESET_EVENT:
 		dev_info(dev, "CI13XXX_CONTROLLER_RESET_EVENT received\n");
