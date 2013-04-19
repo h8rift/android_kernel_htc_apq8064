@@ -137,7 +137,9 @@ int update_preset_lcdc_lut(void)
 
 static struct msm_fb_platform_data msm_fb_pdata = {
 	.detect_client = msm_fb_detect_panel,
+#ifdef CONFIG_UPDATE_LCDC_LUT
 	.update_lcdc_lut = update_preset_lcdc_lut,
+#endif
 };
 
 static struct platform_device msm_fb_device = {
@@ -351,12 +353,12 @@ static struct platform_device hdmi_msm_device = {
 	.dev.platform_data = &hdmi_msm_data,
 };
 
+#ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
 static char wfd_check_mdp_iommu_split_domain(void)
 {
 	return mdp_pdata.mdp_iommu_split_domain;
 }
 
-#ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
 static struct msm_wfd_platform_data wfd_pdata = {
 	.wfd_check_mdp_iommu_split = wfd_check_mdp_iommu_split_domain,
 };
