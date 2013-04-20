@@ -530,12 +530,12 @@ static void mmc_wait_for_req_done(struct mmc_host *host,
 				  struct mmc_request *mrq)
 {
 	struct mmc_command *cmd;
-#if defined CONFIG_MACH_HTC
+#if defined(CONFIG_MACH_HTC) && !defined(CONFIG_MACH_M7_UL)
 	unsigned long timeout = 0;
 #endif
 
 	while (1) {
-#if defined CONFIG_MACH_HTC
+#if defined(CONFIG_MACH_HTC) && !defined(CONFIG_MACH_M7_UL)
 	if (host->index == 1) {
 		timeout = wait_for_completion_timeout(&mrq->completion, msecs_to_jiffies(2000));
 		if (!timeout) {

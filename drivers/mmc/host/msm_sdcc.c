@@ -150,6 +150,61 @@ msmsdcc_print_status(struct msmsdcc_host *host, char *hdr, uint32_t status)
 }
 #endif
 
+static int is_mmc_platform(struct mmc_platform_data *plat)
+{
+        if (plat && ((plat->slot_type && *plat->slot_type == MMC_TYPE_MMC) || !plat->slot_type))
+		return 1;
+
+	return 0;
+}
+
+int mmc_tuning_fail = 0;
+EXPORT_SYMBOL(mmc_tuning_fail);
+
+static int is_wifi_slot(struct mmc_platform_data *plat)
+{
+	if (plat->slot_type && *plat->slot_type == MMC_TYPE_SDIO_WIFI)
+		return 1;
+
+	return 0;
+}
+
+int is_wifi_platform(struct mmc_platform_data *plat)
+{
+	if (plat && plat->slot_type && *plat->slot_type == MMC_TYPE_SDIO_WIFI)
+		return 1;
+
+	return 0;
+}
+EXPORT_SYMBOL(is_wifi_platform);
+
+int is_wifi_mmc_host(struct mmc_host *mmc)
+{
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	if (host && is_wifi_platform(host->plat))
+		return 1;
+
+	return 0;
+}
+EXPORT_SYMBOL(is_wifi_mmc_host);
+
+int is_wimax_platform(struct mmc_platform_data *plat)
+{
+	if (plat && plat->slot_type && *plat->slot_type == MMC_TYPE_SDIO_WIMAX)
+		return 1;
+
+	return 0;
+}
+EXPORT_SYMBOL(is_wimax_platform);
+
+static int is_sd_platform(struct mmc_platform_data *plat)
+{
+	if (plat && plat->slot_type && *plat->slot_type == MMC_TYPE_SD)
+		return 1;
+
+	return 0;
+}
+
 static void
 msmsdcc_start_command(struct msmsdcc_host *host, struct mmc_command *cmd,
 		      u32 c);
@@ -2244,7 +2299,13 @@ msmsdcc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	if ((mmc->card) && (mmc->card->quirks & MMC_QUIRK_INAND_DATA_TIMEOUT))
 		host->curr.req_tout_ms = 20000;
 	else
-		host->curr.req_tout_ms = MSM_MMC_REQ_TIMEOUT;
+          {
+		if (is_wifi_platform(host->plat)) {
+			host->curr.req_tout_ms = 4000;
+		} else {
+			host->curr.req_tout_ms = MSM_MMC_REQ_TIMEOUT;
+		}
+          }
 	/*
 	 * Kick the software request timeout timer here with the timeout
 	 * value identified above
@@ -2502,7 +2563,7 @@ static int msmsdcc_setup_vreg(struct msmsdcc_host *host, bool enable,
 
 	curr_slot = host->plat->vreg_data;
 	if (!curr_slot) {
-		rc = -EINVAL;
+          //		rc = -EINVAL;
 		goto out;
 	}
 
@@ -3339,6 +3400,11 @@ msmsdcc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	clk |= MCI_CLK_FLOWENA;
 
 	host->tuning_needed = 0;
+	if (is_wifi_platform(host->plat)) {
+		mmc_tuning_fail = 0;
+		smp_mb();
+	}
+
 	/*
 	 * Select the controller timing mode according
 	 * to current bus speed mode
@@ -3371,6 +3437,14 @@ msmsdcc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	/* Select free running MCLK as input clock of cm_dll_sdc4 */
 	clk |= (2 << 23);
+
+#ifdef CONFIG_ARCH_APQ8064
+	if (ios->vdd) {
+		if (is_wifi_slot(host->plat) && host->pdev_id == 3) {
+			host->io_pad_pwr_switch = 1;
+		}
+	}
+#endif
 
 	if (host->io_pad_pwr_switch)
 		clk |= IO_PAD_PWR_SWITCH;
@@ -5901,8 +5975,17 @@ msmsdcc_probe(struct platform_device *pdev)
 		mmc->caps |= MMC_CAP_NONREMOVABLE;
 	mmc->caps |= MMC_CAP_SDIO_IRQ;
 
-	if (plat->is_sdio_al_client)
+	if (plat->is_sdio_al_client || is_mmc_platform(host->plat) || is_sd_platform(host->plat))
 		mmc->pm_flags |= MMC_PM_IGNORE_PM_NOTIFY;
+
+	
+#ifdef CONFIG_WIMAX
+	if (is_wifi_slot(host->plat) || is_wimax_platform(host->plat)) {
+#else
+	if (is_wifi_slot(host->plat)) {
+#endif
+		mmc->pm_flags |= MMC_PM_IGNORE_PM_NOTIFY;
+	}
 
 	mmc->max_segs = msmsdcc_get_nr_sg(host);
 	mmc->max_blk_size = MMC_MAX_BLK_SIZE;
@@ -6417,7 +6500,13 @@ msmsdcc_runtime_suspend(struct device *dev)
 		if (unlikely(work_busy(&mmc->detect.work)))
 			rc = -EAGAIN;
 		else
-			rc = mmc_suspend_host(mmc);
+                  {
+			if (!is_wifi_slot(host->plat)) {
+				rc = mmc_suspend_host(mmc);
+				if (!rc && is_mmc_platform(host->plat))
+					msmsdcc_gate_clock(host);
+			}
+                  }
 		pm_runtime_put_noidle(dev);
 
 		if (!rc) {

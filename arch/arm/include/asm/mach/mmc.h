@@ -144,6 +144,7 @@ struct mmc_platform_data {
 	unsigned int uhs_caps;
 	/* More capabilities */
 	unsigned int uhs_caps2;
+	unsigned int *slot_type;
 	/* Supported packed write */
 	unsigned int packed_write;
 	void (*sdio_lpm_gpio_setup)(struct device *, unsigned int);
