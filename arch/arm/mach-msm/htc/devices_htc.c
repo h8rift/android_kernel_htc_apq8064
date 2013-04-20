@@ -483,6 +483,60 @@ int __init board_ats_init(char *s)
 }
 __setup("ats=", board_ats_init);
 
+static int tamper_sf;
+int __init check_tamper_sf(char *s)
+{
+	tamper_sf = simple_strtoul(s, 0, 10);
+	return 1;
+}
+__setup("td.sf=", check_tamper_sf);
+
+unsigned int get_tamper_sf(void)
+{
+	return tamper_sf;
+}
+EXPORT_SYMBOL(get_tamper_sf);
+
+static int ls_setting = 0;
+#define FAKE_ID 2
+#define REAL_ID 1
+int __init board_ls_setting(char *s)
+{
+	if (!strcmp(s, "0x1"))
+		ls_setting = REAL_ID;
+	else if (!strcmp(s, "0x2"))
+		ls_setting = FAKE_ID;
+
+	return 1;
+}
+__setup("lscd=", board_ls_setting);
+
+int get_ls_setting(void)
+{
+	return ls_setting;
+}
+EXPORT_SYMBOL(get_ls_setting);
+
+#define WIFI_DEFAULT 1
+#define WIFI_EMEA 2
+static int wifi_setting = 0;
+int __init board_wifi_setting(char *s)
+{
+	if (!strcmp(s, "0x1"))
+		wifi_setting = WIFI_DEFAULT;
+	else if (!strcmp(s, "0x2"))
+		wifi_setting = WIFI_EMEA;
+
+	return 1;
+}
+__setup("wificd=", board_wifi_setting);
+
+int get_wifi_setting(void)
+{
+	return wifi_setting;
+}
+EXPORT_SYMBOL(get_wifi_setting);
+
 static char android_serialno[16] = {0};
 static int __init board_serialno_setup(char *serialno)
 {

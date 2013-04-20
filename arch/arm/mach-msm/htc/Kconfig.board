@@ -8,6 +8,8 @@ source "arch/arm/mach-msm/htc/ville/Kconfig"
 source "arch/arm/mach-msm/htc/elite/Kconfig"
 # JET/JEWEL
 source "arch/arm/mach-msm/htc/jet/Kconfig"
+# M7
+source "arch/arm/mach-msm/htc/m7/Kconfig"
 
 config MACH_HTC_DUMMY
 	bool "NONE (No device)"

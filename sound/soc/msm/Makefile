@@ -65,6 +65,11 @@ obj-$(CONFIG_SND_SOC_QDSP6) += snd-soc-qdsp6.o
 ifneq ($(CONFIG_MACH_HTC),y)
 snd-soc-msm8960-objs := msm8960.o apq8064.o msm8930.o mpq8064.o apq8064-i2s.o
 obj-$(CONFIG_SND_SOC_MSM8960) += snd-soc-msm8960.o
+else
+ifeq ($(CONFIG_MACH_M7_UL),y)
+snd-soc-msm8960-objs := msm8960.o apq8064.o msm8930.o mpq8064.o apq8064-i2s.o
+obj-$(CONFIG_SND_SOC_MSM8960) += snd-soc-msm8960.o
+endif
 endif
 
 # Generic MSM drivers
