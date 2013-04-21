@@ -151,6 +151,8 @@ static uint8_t ps2_offset_adc;
 static struct cm3629_info *lp_info;
 int enable_cm3629_log;
 int f_cm3629_level = -1;
+int current_lightsensor_adc;
+int current_lightsensor_kadc;
 static struct mutex als_enable_mutex, als_disable_mutex, als_get_adc_mutex;
 static struct mutex ps_enable_mutex;
 static int ps_hal_enable, ps_drv_enable;
@@ -159,6 +161,18 @@ static int lightsensor_disable(struct cm3629_info *lpi);
 static void psensor_initial_cmd(struct cm3629_info *lpi);
 static int ps_near;
 static int pocket_mode_flag, psensor_enable_by_touch;
+
+int get_lightsensoradc(void)
+{
+	return current_lightsensor_adc;
+
+}
+int get_lightsensorkadc(void)
+{
+	return current_lightsensor_kadc;
+
+}
+
 #if (0)
 static int I2C_RxData(uint16_t slaveAddr, uint8_t *rxData, int length)
 {
@@ -665,7 +679,7 @@ static void report_lsensor_input_event(struct cm3629_info *lpi, bool resume)
 	else
 		D("[LS][cm3629] %s: ADC=0x%03X, Level=%d, l_thd = 0x%x, h_thd = 0x%x \n",
 			__func__, adc_value, level, *(lpi->cali_table + (i - 1)) + 1, *(lpi->cali_table + i));
-
+	current_lightsensor_adc = adc_value;
 	lpi->current_level = level;
 	lpi->current_adc = adc_value;
 	/*D("[cm3629] %s: *(lpi->cali_table + (i - 1)) + 1 = 0x%X, *(lpi->cali_table + i) = 0x%x \n", __func__, *(lpi->cali_table + (i - 1)) + 1, *(lpi->cali_table + i));*/
@@ -1190,7 +1204,7 @@ static void lightsensor_set_kvalue(struct cm3629_info *lpi)
 		lpi->als_kadc = 0;
 		D("[LS][cm3629] %s: no ALS calibrated\n", __func__);
 	}
-
+	current_lightsensor_kadc = lpi->als_kadc;
 	if (lpi->als_kadc && lpi->golden_adc > 0) {
 		lpi->als_kadc = (lpi->als_kadc > 0) ?
 				lpi->als_kadc : lpi->golden_adc;

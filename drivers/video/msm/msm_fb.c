@@ -57,6 +57,7 @@
 #define MSM_FB_NUM	3
 #endif
 
+extern int get_lightsensoradc(void);
 static unsigned char *fbram;
 static unsigned char *fbram_phys;
 static int fbram_size;
@@ -175,6 +176,170 @@ int msm_fb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 static int msm_fb_resource_initialized;
 
 #ifndef CONFIG_FB_BACKLIGHT
+unsigned long color_enhance_status = 1;
+unsigned long color_enhance_status_old = 1;
+enum {
+        COLOR_ENHANCE_STATE = 0,
+};
+
+static int color_enhance_switch(int on)
+{
+	if (test_bit(COLOR_ENHANCE_STATE, &color_enhance_status) == on)
+		return 0;
+
+	if (on) {
+		printk("%s: turn on color enhance\n", __func__);
+		set_bit(COLOR_ENHANCE_STATE, &color_enhance_status);
+	} else {
+		printk("%s: turn off color enhance\n", __func__);
+		clear_bit(COLOR_ENHANCE_STATE, &color_enhance_status);
+	}
+
+	return 0;
+}
+
+static ssize_t
+color_enhance_show(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t
+color_enhance_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count);
+#define COLOR_ENHANCE_ATTR(name) __ATTR(name, 0644, color_enhance_show, color_enhance_store)
+
+static struct device_attribute color_enhance_attr = COLOR_ENHANCE_ATTR(color_enhance);
+static ssize_t
+color_enhance_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int i = 0;
+
+	i += scnprintf(buf + i, PAGE_SIZE - 1, "%d\n",
+				test_bit(COLOR_ENHANCE_STATE, &color_enhance_status));
+	return i;
+}
+
+static ssize_t
+color_enhance_store(struct device *dev, struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	int rc;
+	unsigned long res;
+
+	rc = strict_strtoul(buf, 10, &res);
+	if (rc) {
+		printk("invalid parameter, %s %d\n", buf, rc);
+		count = -EINVAL;
+		goto err_out;
+	}
+	if (color_enhance_switch(!!res))
+		count = -EIO;
+
+err_out:
+	return count;
+}
+
+#ifdef CONFIG_FB_MSM_CABC_LEVEL_CONTROL
+unsigned long cabc_level_ctl_status = 0;
+unsigned long cabc_level_ctl_status_old = 0;
+
+static int cabc_level_ctl_switch(int level)
+{
+	if (level == cabc_level_ctl_status)
+		return 1;
+
+	cabc_level_ctl_status = level;
+	printk(KERN_INFO "%s: change cabc level\n", __func__);
+
+	return 0;
+}
+
+static ssize_t
+cabc_level_ctl_show(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t
+cabc_level_ctl_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count);
+#define CABC_LEVEL_CTL_ATTR(name) __ATTR(name, 0644, cabc_level_ctl_show, cabc_level_ctl_store)
+
+static struct device_attribute cabc_level_ctl_attr = CABC_LEVEL_CTL_ATTR(cabc_level_ctl);
+static ssize_t
+cabc_level_ctl_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int i = 0;
+
+	i += scnprintf(buf + i, PAGE_SIZE - 1, "%lu\n", cabc_level_ctl_status);
+	return i;
+}
+
+static ssize_t
+cabc_level_ctl_store(struct device *dev, struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	int rc;
+	unsigned long res;
+
+	rc = strict_strtoul(buf, 10, &res);
+	if (rc) {
+		printk(KERN_INFO "invalid parameter, %s %d\n", buf, rc);
+		count = -EINVAL;
+		goto err_out;
+	}
+	if (cabc_level_ctl_switch(res))
+		count = -EIO;
+
+err_out:
+	return count;
+}
+#endif
+
+unsigned long sre_status = 0;
+unsigned long sre_status_old = 0;
+
+static int sre_ctl_switch(int level)
+{
+   if (level == sre_status)
+       return 1;
+
+   sre_status = level;
+   
+
+   return 0;
+}
+
+static ssize_t
+sre_ctl_show(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t
+sre_ctl_store(struct device *dev, struct device_attribute *attr,
+       const char *buf, size_t count);
+#define SRE_CTL_ATTR(name) __ATTR(name, 0644, sre_ctl_show, sre_ctl_store)
+
+static struct device_attribute sre_ctl_attr = SRE_CTL_ATTR(sre_status_ctl);
+static ssize_t
+sre_ctl_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+   int i = 0;
+
+   i += scnprintf(buf + i, PAGE_SIZE - 1, "%lu\n", sre_status);
+   return i;
+}
+
+static ssize_t
+sre_ctl_store(struct device *dev, struct device_attribute *attr,
+   const char *buf, size_t count)
+{
+   int rc;
+   unsigned long res;
+
+   rc = strict_strtoul(buf, 10, &res);
+   if (rc) {
+       printk(KERN_INFO "invalid parameter, %s %d\n", buf, rc);
+       count = -EINVAL;
+       goto err_out;
+   }
+   if (sre_ctl_switch(res))
+       count = -EIO;
+
+err_out:
+   return count;
+}
+
 static int lcd_backlight_registered;
 
 static void msm_fb_set_bl_brightness(struct led_classdev *led_cdev,
@@ -207,6 +372,82 @@ static struct led_classdev backlight_led = {
 	.brightness_set	= msm_fb_set_bl_brightness,
 };
 #endif
+
+#ifdef CONFIG_MSM_ACL_ENABLE
+unsigned long auto_bkl_status = 8;
+static int cabc_updated = 0;
+#define CABC_STATE_DCR 1
+
+static int cabc_switch(int on)
+{
+	if (test_bit(CABC_STATE_DCR, &auto_bkl_status) == on)
+		return 1;
+
+	if (on) {
+		PR_DISP_INFO("turn on DCR\n");
+		set_bit(CABC_STATE_DCR, &auto_bkl_status);
+	} else {
+		PR_DISP_INFO("turn off DCR\n");
+		clear_bit(CABC_STATE_DCR, &auto_bkl_status);
+	}
+	cabc_updated = 0;
+
+	return 1;
+}
+
+static ssize_t
+auto_backlight_show(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t
+auto_backlight_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count);
+#define CABC_ATTR(name) __ATTR(name, 0644, auto_backlight_show, auto_backlight_store)
+
+static struct device_attribute auto_attr = CABC_ATTR(auto);
+static ssize_t
+auto_backlight_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int i = 0;
+
+	i += scnprintf(buf + i, PAGE_SIZE - 1, "%d\n",
+				test_bit(CABC_STATE_DCR, &auto_bkl_status));
+	return i;
+}
+
+static ssize_t
+auto_backlight_store(struct device *dev, struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	int rc;
+	unsigned long res;
+
+	rc = strict_strtoul(buf, 10, &res);
+	if (rc) {
+		PR_DISP_INFO("invalid parameter, %s %d\n", buf, rc);
+		count = -EINVAL;
+		goto err_out;
+	}
+	if (cabc_switch(!!res))
+		count = -EIO;
+
+err_out:
+	return count;
+}
+#endif
+
+static const char *cameratitle = "BL_CAM_MIN=";
+static unsigned backlightvalue = 0;
+
+static ssize_t app_list_value_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret =0;
+	sprintf(buf,"%s%u\n", cameratitle, backlightvalue);
+	ret = strlen(buf) + 1;
+	return ret;
+}
+
+#define BACKLIGHT_ATTR(name) __ATTR(name, 0644, app_list_value_show, NULL)
+static struct device_attribute app_attr = BACKLIGHT_ATTR(backlight_info);
 
 static struct msm_fb_platform_data *msm_fb_pdata;
 unsigned char hdmi_prim_display;
@@ -366,15 +607,54 @@ static int msm_fb_create_sysfs(struct platform_device *pdev)
 			rc);
 	return rc;
 }
+
 static void msm_fb_remove_sysfs(struct platform_device *pdev)
 {
 	struct msm_fb_data_type *mfd = platform_get_drvdata(pdev);
 	sysfs_remove_group(&mfd->fbi->dev->kobj, &msm_fb_attr_group);
 }
 
+static void dimming_do_work(struct work_struct *work)
+{
+	struct msm_fb_data_type *mfd = container_of(
+			work, struct msm_fb_data_type, dimming_work);
+	struct msm_fb_panel_data *pdata;
+	pdata = (struct msm_fb_panel_data *)mfd->pdev->dev.platform_data;
+
+	if ((pdata) && (pdata->dimming_on)) {
+		pdata->dimming_on(mfd);
+	}
+}
+
+static void dimming_update(unsigned long data)
+{
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)data;
+	queue_work(mfd->dimming_wq, &mfd->dimming_work);
+}
+
+static void sre_do_work(struct work_struct *work)
+{
+   struct msm_fb_data_type *mfd = container_of(
+           work, struct msm_fb_data_type, sre_work);
+   struct msm_fb_panel_data *pdata;
+   pdata = (struct msm_fb_panel_data *)mfd->pdev->dev.platform_data;
+
+   if ((pdata) && (pdata->sre_ctrl)) {
+       pdata->sre_ctrl(mfd, get_lightsensoradc());
+       mod_timer(&mfd->sre_update_timer, jiffies + msecs_to_jiffies(1000));
+   }
+}
+
+static void sre_update(unsigned long data)
+{
+   struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)data;
+   queue_work(mfd->sre_wq, &mfd->sre_work);
+}
+
 static int msm_fb_probe(struct platform_device *pdev)
 {
 	struct msm_fb_data_type *mfd;
+	struct msm_fb_panel_data *pdata;
 	int rc;
 	int err = 0;
 
@@ -452,9 +732,49 @@ static int msm_fb_probe(struct platform_device *pdev)
 		if (led_classdev_register(&pdev->dev, &backlight_led))
 			printk(KERN_ERR "led_classdev_register failed\n");
 		else
+                  {
 			lcd_backlight_registered = 1;
+			if (device_create_file(backlight_led.dev, &color_enhance_attr))
+				printk("attr creation failed\n");
+#ifdef CONFIG_MSM_ACL_ENABLE
+			if(device_create_file(backlight_led.dev, &auto_attr))
+				printk(KERN_INFO "attr creation failed\n");
+#endif
+
+#ifdef CONFIG_FB_MSM_CABC_LEVEL_CONTROL
+			if (device_create_file(backlight_led.dev, &cabc_level_ctl_attr))
+				printk(KERN_INFO "attr creation failed\n");
+#endif
+			if (device_create_file(backlight_led.dev, &sre_ctl_attr))
+				printk(KERN_INFO "attr creation failed for sre_ctl_attr\n");
+
+		}
 	}
 #endif
+	pdata = (struct msm_fb_panel_data *)mfd->pdev->dev.platform_data;
+	if ((pdata) && (pdata->dimming_on)) {
+		INIT_WORK(&mfd->dimming_work, dimming_do_work);
+		mfd->dimming_wq = create_workqueue("dimming_wq");
+		if (!mfd->dimming_wq)
+			printk(KERN_ERR "%s: can't create workqueue for dimming_wq\n", __func__);
+		else
+			setup_timer(&mfd->dimming_update_timer, dimming_update, (unsigned long)mfd);
+	}
+
+	if ((pdata) && (pdata->sre_ctrl)) {
+		INIT_WORK(&mfd->sre_work, sre_do_work);
+		mfd->sre_wq= create_workqueue("sre_wq");
+		if (!mfd->sre_wq)
+			printk(KERN_ERR "%s: can't create workqueue for sre_wq\n", __func__);
+		else
+			setup_timer(&mfd->sre_update_timer, sre_update, (unsigned long)mfd);
+	}
+
+	if (mfd->panel_info.pdest == DISPLAY_1) {
+		err = device_create_file(backlight_led.dev, &app_attr);
+		if (err)
+			device_remove_file(&pdev->dev, &app_attr);
+	}
 
 	pdev_list[pdev_list_cnt++] = pdev;
 	msm_fb_create_sysfs(pdev);
@@ -983,8 +1303,14 @@ static int msm_fb_blank_sub(int blank_mode, struct fb_info *info,
 			mfd->op_enable = FALSE;
 			curr_pwr_state = mfd->panel_power_on;
 			mfd->panel_power_on = FALSE;
-
-			if (mfd->msmfb_no_update_notify_timer.function)
+                        
+                        if ((pdata) && (pdata->dimming_on))
+                          del_timer_sync(&mfd->dimming_update_timer);
+                        
+			if ((pdata) && (pdata->sre_ctrl))
+                          del_timer_sync(&mfd->sre_update_timer);
+                        
+                        if (mfd->msmfb_no_update_notify_timer.function)
 				del_timer(&mfd->msmfb_no_update_notify_timer);
 			complete(&mfd->msmfb_no_update_notify);
 
@@ -2052,6 +2378,19 @@ static int msm_fb_pan_display_sub(struct fb_var_screeninfo *var,
 
 		dirtyPtr = &dirty;
 	}
+
+	if (test_bit(COLOR_ENHANCE_STATE, &color_enhance_status) != test_bit(COLOR_ENHANCE_STATE, &color_enhance_status_old)) {
+		pdata = (struct msm_fb_panel_data *)mfd->pdev->
+				dev.platform_data;
+		if (test_bit(COLOR_ENHANCE_STATE, &color_enhance_status) == 1) {
+			if ((pdata) && (pdata->color_enhance))
+				pdata->color_enhance(mfd,1);
+		} else {
+			if ((pdata) && (pdata->color_enhance))
+				pdata->color_enhance(mfd,0);
+		}
+		color_enhance_status_old = color_enhance_status;
+	}
 	complete(&mfd->msmfb_update_notify);
 	mutex_lock(&msm_fb_notify_update_sem);
 	if (mfd->msmfb_no_update_notify_timer.function)
@@ -2083,6 +2422,15 @@ static int msm_fb_pan_display_sub(struct fb_var_screeninfo *var,
 		pr_err("%s: unmap secure res failed\n", __func__);
 
 	up(&msm_fb_pan_sem);
+
+	if ((mfd->pdev->dev.platform_data) 
+            && ((struct msm_fb_panel_data *)mfd->pdev->dev.platform_data)->sre_ctrl) {
+		mod_timer(&mfd->sre_update_timer, jiffies + msecs_to_jiffies(50));
+	}
+	if ((mfd->pdev->dev.platform_data) 
+            && ((struct msm_fb_panel_data *)mfd->pdev->dev.platform_data)->dimming_on) {
+		mod_timer(&mfd->dimming_update_timer, jiffies + msecs_to_jiffies(1000));
+	}
 
 	if (unset_bl_level && !bl_updated) {
 		pdata = (struct msm_fb_panel_data *)mfd->pdev->

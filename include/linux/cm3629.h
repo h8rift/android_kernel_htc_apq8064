@@ -180,6 +180,8 @@ enum {
 	CM3629_PS2_ONLY,
 	CM3629_PS1_PS2_BOTH,
 };
+int get_lightsensoradc(void);
+int get_lightsensorkadc(void);
 
 struct cm3629_platform_data {
 	int model;

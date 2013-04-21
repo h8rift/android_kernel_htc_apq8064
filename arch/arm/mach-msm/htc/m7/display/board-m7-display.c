@@ -671,12 +671,12 @@ static struct msm_panel_common_pdata mdp_pdata = {
 	.mdp_max_clk = 200000000,
 };
 
+#ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
 static char wfd_check_mdp_iommu_split_domain(void)
 {
     return mdp_pdata.mdp_iommu_split_domain;
 }
 
-#ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
 static struct msm_wfd_platform_data wfd_pdata = {
     .wfd_check_mdp_iommu_split = wfd_check_mdp_iommu_split_domain,
 };
@@ -1132,12 +1132,14 @@ static struct dsi_cmd_desc samsung_color_enhance_on_cmds[] = {
 	{DTYPE_GEN_WRITE1, 1, 0, 0, 0, sizeof(SAE),SAE},
 	{DTYPE_GEN_LWRITE, 1, 0, 0, 0, sizeof(samsung_password_l2_close), samsung_password_l2_close},
 };
+
 static struct dsi_cmd_desc jdi_samsung_sre_ctrl_cmds[] = {
 	{DTYPE_DCS_WRITE1, 1, 0, 0, 1, sizeof(jdi_samsung_CABC), jdi_samsung_CABC},
 	{DTYPE_GEN_LWRITE, 1, 0, 0, 0, sizeof(samsung_password_l2), samsung_password_l2},
 	{DTYPE_GEN_LWRITE, 1, 0, 0, 1, sizeof(ALPS), ALPS},
 	{DTYPE_GEN_LWRITE, 1, 0, 0, 0, sizeof(samsung_password_l2_close), samsung_password_l2_close},
 };
+
 static struct dsi_cmd_desc samsung_jdi_panel_cmd_mode_cmds[] = {
 #if 0
 	{DTYPE_GEN_LWRITE, 1, 0, 0, 1, sizeof(samsung_password_l2), samsung_password_l2},
@@ -2124,14 +2126,14 @@ static struct msm_fb_panel_data m7_panel_data = {
 	.on	= m7_lcd_on,
 	.off	= m7_lcd_off,
 	.set_backlight = m7_set_backlight,
-        //	.color_enhance = m7_color_enhance,
+        .color_enhance = m7_color_enhance,
 #ifdef CABC_DIMMING_SWITCH
-        //	.dimming_on = m7_dim_on,
+        .dimming_on = m7_dim_on,
 #endif
 #ifdef CONFIG_FB_MSM_CABC_LEVEL_CONTROL
 	.set_cabc = m7_set_cabc,
 #endif
-        //	.sre_ctrl = m7_sre_ctrl,
+        .sre_ctrl = m7_sre_ctrl,
 };
 
 static struct msm_panel_info pinfo;

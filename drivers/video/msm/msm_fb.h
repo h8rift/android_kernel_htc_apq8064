@@ -217,6 +217,13 @@ struct msm_fb_data_type {
 	unsigned char *copy_splash_phys;
 	uint32 sec_mapped;
 	uint32 sec_active;
+
+	struct workqueue_struct *dimming_wq;
+	struct work_struct dimming_work;
+	struct timer_list dimming_update_timer;
+	struct workqueue_struct *sre_wq;
+        struct work_struct sre_work;
+        struct timer_list sre_update_timer;
 };
 struct msm_fb_backup_type {
 	struct fb_info info;
